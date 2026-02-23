@@ -1,0 +1,7 @@
+file,pack,category,bucket,confidence,action,reason
+/home/oai/share/producer_os_project/test_env/inbox/MyLoopsPack/drumloop_02.wav,MyLoopsPack,Loops,DrumLoop,1.00,NONE,"best match: DrumLoop, confidence=1.00; destination exists"
+/home/oai/share/producer_os_project/test_env/inbox/MyLoopsPack/melodic_loop_01.wav,MyLoopsPack,Loops,MelodyLoop,1.00,NONE,"best match: MelodyLoop, confidence=1.00; destination exists"
+/home/oai/share/producer_os_project/test_env/inbox/UnknownPack/weirdo_sample.wav,UnknownPack,UNSORTED,UNSORTED,0.00,NONE,no matches; destination exists
+/home/oai/share/producer_os_project/test_env/inbox/UnknownPack/random.mid,UnknownPack,MIDI,MIDI,1.00,NONE,"best match: MIDI, confidence=1.00; destination exists"
+/home/oai/share/producer_os_project/test_env/inbox/My808Pack/kick_punch.wav,My808Pack,Samples,Kicks,1.00,NONE,"best match: Kicks, confidence=1.00; destination exists"
+/home/oai/share/producer_os_project/test_env/inbox/My808Pack/808_boom.wav,My808Pack,Samples,808s,1.00,NONE,"best match: 808s, confidence=1.00; destination exists"

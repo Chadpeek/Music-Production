@@ -1,0 +1,80 @@
+{
+  "run_id": "20260223_084424_d17c226c",
+  "mode": "analyze",
+  "timestamp": "2026-02-23T08:44:24.100359",
+  "files_processed": 6,
+  "files_moved": 0,
+  "files_copied": 0,
+  "unsorted": 1,
+  "packs": [
+    {
+      "pack": "MyLoopsPack",
+      "files": [
+        {
+          "source": "/home/oai/share/producer_os_project/test_env/inbox/MyLoopsPack/drumloop_02.wav",
+          "dest": "/home/oai/share/producer_os_project/test_env/hub/Loops/DrumLoop/MyLoopsPack/drumloop_02.wav",
+          "bucket": "DrumLoop",
+          "category": "Loops",
+          "confidence": 1.0,
+          "action": "NONE",
+          "reason": "best match: DrumLoop, confidence=1.00"
+        },
+        {
+          "source": "/home/oai/share/producer_os_project/test_env/inbox/MyLoopsPack/melodic_loop_01.wav",
+          "dest": "/home/oai/share/producer_os_project/test_env/hub/Loops/MelodyLoop/MyLoopsPack/melodic_loop_01.wav",
+          "bucket": "MelodyLoop",
+          "category": "Loops",
+          "confidence": 1.0,
+          "action": "NONE",
+          "reason": "best match: MelodyLoop, confidence=1.00"
+        }
+      ]
+    },
+    {
+      "pack": "UnknownPack",
+      "files": [
+        {
+          "source": "/home/oai/share/producer_os_project/test_env/inbox/UnknownPack/weirdo_sample.wav",
+          "dest": "/home/oai/share/producer_os_project/test_env/hub/UNSORTED/UnknownPack/weirdo_sample.wav",
+          "bucket": "UNSORTED",
+          "category": "UNSORTED",
+          "confidence": 0.0,
+          "action": "NONE",
+          "reason": "no matches"
+        },
+        {
+          "source": "/home/oai/share/producer_os_project/test_env/inbox/UnknownPack/random.mid",
+          "dest": "/home/oai/share/producer_os_project/test_env/hub/MIDI/MIDI/UnknownPack/random.mid",
+          "bucket": "MIDI",
+          "category": "MIDI",
+          "confidence": 1.0,
+          "action": "NONE",
+          "reason": "best match: MIDI, confidence=1.00"
+        }
+      ]
+    },
+    {
+      "pack": "My808Pack",
+      "files": [
+        {
+          "source": "/home/oai/share/producer_os_project/test_env/inbox/My808Pack/kick_punch.wav",
+          "dest": "/home/oai/share/producer_os_project/test_env/hub/Samples/Kicks/My808Pack/kick_punch.wav",
+          "bucket": "Kicks",
+          "category": "Samples",
+          "confidence": 1.0,
+          "action": "NONE",
+          "reason": "best match: Kicks, confidence=1.00"
+        },
+        {
+          "source": "/home/oai/share/producer_os_project/test_env/inbox/My808Pack/808_boom.wav",
+          "dest": "/home/oai/share/producer_os_project/test_env/hub/Samples/808s/My808Pack/808_boom.wav",
+          "bucket": "808s",
+          "category": "Samples",
+          "confidence": 1.0,
+          "action": "NONE",
+          "reason": "best match: 808s, confidence=1.00"
+        }
+      ]
+    }
+  ]
+}

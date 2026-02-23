@@ -1,0 +1,56 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Bucket Styles",
+  "description": "Schema for category and bucket styles used by Producer OS.",
+  "type": "object",
+  "properties": {
+    "categories": {
+      "type": "object",
+      "description": "Mapping of category names to style definitions.",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "Color": {
+            "type": "string",
+            "description": "Hex colour code prefixed with '$'"
+          },
+          "IconIndex": {
+            "type": "integer",
+            "description": "FL Studio icon index"
+          },
+          "SortGroup": {
+            "type": "integer",
+            "description": "Sort order grouping for the item"
+          }
+        },
+        "required": ["Color", "IconIndex", "SortGroup"],
+        "additionalProperties": false
+      }
+    },
+    "buckets": {
+      "type": "object",
+      "description": "Mapping of bucket identifiers to style definitions.",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "Color": {
+            "type": "string",
+            "description": "Hex colour code prefixed with '$'"
+          },
+          "IconIndex": {
+            "type": "integer",
+            "description": "FL Studio icon index"
+          },
+          "SortGroup": {
+            "type": "integer",
+            "description": "Sort order grouping for the item"
+          }
+        },
+        "required": ["Color", "IconIndex", "SortGroup"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["categories", "buckets"],
+  "additionalProperties": false
+}

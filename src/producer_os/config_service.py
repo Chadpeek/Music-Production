@@ -1,26 +1,16 @@
-"""Configuration management for Producer OS.
+"""Configuration management for Producer OS (v2).
 
 This module centralises all logic related to finding and loading
 configuration files.  It supports both AppData and portable
 installation modes, resolves the appropriate configuration
 directory, and exposes helper functions to read/write JSON
-configuration files with JSON schema validation.
+configuration files with JSON schema validation.  In addition to the
+original configuration and styles files, v2 introduces a
+``buckets.json`` file containing bucket rename mappings.
 
-The configuration is stored in a JSON file called ``config.json``.
-Clients can override the configuration location by passing
-``--portable`` to the CLI or by placing a ``portable.flag`` file
-alongside the running script/binary.  Portable mode always
-prioritises using files from the application directory.
-
-When running in AppData mode on Windows the configuration lives
-under ``%APPDATA%\ProducerOS``; on other systems the directory
-defaults to ``$XDG_CONFIG_HOME/ProducerOS`` or ``~/.config/ProducerOS``.
-
-JSON schema validation is performed using the built‑in
-``jsonschema`` library if available; if validation fails a
-``ValueError`` is raised with an explanation of the invalid
-configuration.  When the schema cannot be loaded or ``jsonschema``
-is unavailable, validation is skipped.
+Portable mode is controlled via a ``portable.flag`` file located
+alongside the application binary or by passing ``--portable`` to the
+CLI.  The flag file takes precedence over the command line.
 
 Example usage::
 
@@ -30,6 +20,7 @@ Example usage::
     cfg = config_service.load_config()
     cfg["inbox"] = "C:/Samples/Inbox"
     config_service.save_config(cfg)
+
 """
 
 from __future__ import annotations
@@ -96,8 +87,13 @@ class ConfigService:
     portable_flag_filename: str = "portable.flag"
     config_filename: str = "config.json"
     styles_filename: str = "bucket_styles.json"
+    buckets_filename: str = "buckets.json"
     schema_dirname: str = "schemas"
-    schema_names: Tuple[str, str] = ("config.schema.json", "styles.schema.json")
+    schema_names: Tuple[str, str, str] = (
+        "config.schema.json",
+        "styles.schema.json",
+        "buckets.schema.json",
+    )
     _cached_mode: Optional[bool] = field(default=None, init=False, repr=False)
 
     def _portable_flag_exists(self) -> bool:
@@ -106,22 +102,29 @@ class ConfigService:
     def detect_mode(self, cli_portable: bool = False) -> bool:
         """Return ``True`` if portable mode should be used.
 
-        Portable mode is selected if any of the following conditions hold:
+        Portable mode is selected if any of the following conditions hold
+        (checked in order):
 
-        * A ``portable.flag`` file exists in the application directory.
-        * ``cli_portable`` is truthy.
+        1. A ``portable.flag`` file exists in the application directory.
+        2. ``cli_portable`` is truthy.
 
-        This check is performed once per instance and cached so that
-        subsequent calls return the same result.
+        When the flag file is present it always forces portable mode,
+        regardless of CLI arguments.  The result is cached for
+        subsequent calls.
         """
         if self._cached_mode is None:
-            self._cached_mode = cli_portable or self._portable_flag_exists()
+            if self._portable_flag_exists():
+                self._cached_mode = True
+            else:
+                self._cached_mode = bool(cli_portable)
         return self._cached_mode
 
     def get_config_dir(self, cli_portable: bool = False) -> Path:
         """Return the resolved configuration directory."""
         if self.detect_mode(cli_portable=cli_portable):
+            # In portable mode configuration lives alongside the app
             return self.app_dir
+        # Otherwise use platform‑specific AppData
         return _get_appdata_root()
 
     def get_config_path(self, cli_portable: bool = False) -> Path:
@@ -129,6 +132,9 @@ class ConfigService:
 
     def get_styles_path(self, cli_portable: bool = False) -> Path:
         return self.get_config_dir(cli_portable) / self.styles_filename
+
+    def get_buckets_path(self, cli_portable: bool = False) -> Path:
+        return self.get_config_dir(cli_portable) / self.buckets_filename
 
     def get_schema_path(self, schema_name: str) -> Path:
         return self.app_dir / self.schema_dirname / schema_name
@@ -177,3 +183,30 @@ class ConfigService:
         if schema_path.exists():
             _validate_json(styles, schema_path)
         _save_json(styles, self.get_styles_path(cli_portable))
+
+    # ------------------------------------------------------------------
+    # Buckets mapping management
+    # ------------------------------------------------------------------
+    def load_buckets(self, cli_portable: bool = False) -> Dict[str, Any]:
+        """Load bucket rename mapping with validation.
+
+        Returns an empty dict when the file is missing or invalid.
+        """
+        buckets_path = self.get_buckets_path(cli_portable)
+        data = _load_json(buckets_path) or {}
+        # Validate mapping against schema if available
+        schema_path = self.get_schema_path(self.schema_names[2])
+        if schema_path.exists():
+            try:
+                _validate_json(data, schema_path)
+            except ValueError as exc:
+                print(f"Warning: {exc}. Ignoring invalid buckets mapping.")
+                data = {}
+        return data
+
+    def save_buckets(self, buckets: Dict[str, Any], cli_portable: bool = False) -> None:
+        """Save the buckets rename mapping to disk after validation."""
+        schema_path = self.get_schema_path(self.schema_names[2])
+        if schema_path.exists():
+            _validate_json(buckets, schema_path)
+        _save_json(buckets, self.get_buckets_path(cli_portable))

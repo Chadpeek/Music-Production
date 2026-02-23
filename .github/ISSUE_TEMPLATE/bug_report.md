@@ -1,29 +1,32 @@
 ---
 name: Bug report
-about: Report a reproducible problem with Producer OS
-title: "[Bug] "
+about: Create a report to help us improve
+title: "Bug: "
 labels: bug
 assignees: ''
+
 ---
 
 **Describe the bug**
 A clear and concise description of what the bug is.
 
-**Steps to reproduce**
-Please provide steps to reproduce the behaviour.  For example:
-1. Run `python -m producer_os.cli move inbox hub`
-2. Observe the error or unexpected output
+**To Reproduce**
+Steps to reproduce the behaviour:
+1. Go to '...'
+2. Click on '....'
+3. Scroll down to '....'
+4. See error
 
 **Expected behaviour**
-Describe what you expected to happen.
+A clear and concise description of what you expected to happen.
 
-**Logs and context**
-If possible, attach relevant logs found under `hub/logs/<run_id>` and
-describe any custom configuration you were using.
+**Screenshots or logs**
+If applicable, add screenshots or relevant logs to help explain your problem.
 
-**Environment**
- - OS: [e.g. Windows 10, macOS 12]
- - Python version: [e.g. 3.10]
+**Environment (please complete the following information):**
+ - OS: [e.g. Windows 11]
+ - Python version: [e.g. 3.11]
+ - Producer OS version: [e.g. v2.0.0]
 
 **Additional context**
 Add any other context about the problem here.

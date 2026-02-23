@@ -1,0 +1,24 @@
+{
+  "categories": {
+    "Samples": {"Color": "$4863A0", "IconIndex": 10, "SortGroup": 0},
+    "Loops":   {"Color": "$A849A8", "IconIndex": 20, "SortGroup": 1},
+    "MIDI":    {"Color": "$3A8E3A", "IconIndex": 30, "SortGroup": 2},
+    "UNSORTED": {"Color": "$7F7F7F", "IconIndex": 0, "SortGroup": 3}
+  },
+  "buckets": {
+    "808s":       {"Color": "$CC0000", "IconIndex": 12, "SortGroup": 0},
+    "Kicks":      {"Color": "$E68A00", "IconIndex": 13, "SortGroup": 0},
+    "Snares":     {"Color": "$E6E600", "IconIndex": 14, "SortGroup": 0},
+    "Claps":      {"Color": "$009900", "IconIndex": 15, "SortGroup": 0},
+    "HiHats":     {"Color": "$0066CC", "IconIndex": 16, "SortGroup": 0},
+    "Percs":      {"Color": "$4B0082", "IconIndex": 17, "SortGroup": 0},
+    "Cymbals":    {"Color": "$9900CC", "IconIndex": 18, "SortGroup": 0},
+    "Bass":       {"Color": "$CC0066", "IconIndex": 19, "SortGroup": 0},
+    "Leads":      {"Color": "$663300", "IconIndex": 20, "SortGroup": 0},
+    "Vox":        {"Color": "$3366FF", "IconIndex": 21, "SortGroup": 0},
+    "FX":         {"Color": "$0099CC", "IconIndex": 22, "SortGroup": 0},
+    "DrumLoop":   {"Color": "$FF9933", "IconIndex": 23, "SortGroup": 1},
+    "MelodyLoop": {"Color": "$9966CC", "IconIndex": 24, "SortGroup": 1},
+    "MIDI":       {"Color": "$3A8E3A", "IconIndex": 30, "SortGroup": 2}
+  }
+}

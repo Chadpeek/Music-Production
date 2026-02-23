@@ -1,4 +1,4 @@
-"""Style resolution and `.nfo` writing for Producer OS.
+"""Style resolution and `.nfo` writing for Producer OS (v2).
 
 This module encapsulates the logic for reading bucket and category
 styles from a JSON file, resolving missing styles with sensible
@@ -28,6 +28,9 @@ fallbacks in order:
 Missing styles do not stop execution.  A warning is printed once
 per missing bucket/category but the system continues using the
 default style.
+
+The v2 update keeps the original behaviour intact while being
+relocated into the `src/producer_os` package.
 """
 
 from __future__ import annotations
@@ -36,7 +39,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional
 
 
 DEFAULT_STYLE = {
@@ -95,7 +98,9 @@ class StyleService:
             # Emit a warning once per missing item
             key = f"{bucket}:{category}"
             if key not in self._reported_missing:
-                print(f"Warning: No style defined for bucket '{bucket}' or category '{category}', using default.")
+                print(
+                    f"Warning: No style defined for bucket '{bucket}' or category '{category}', using default."
+                )
                 self._reported_missing.add(key)
             style = DEFAULT_STYLE
         return style

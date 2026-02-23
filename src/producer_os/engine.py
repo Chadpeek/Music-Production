@@ -1,4 +1,4 @@
-"""Core engine for Producer OS.
+"""Core engine for Producer OS (v2).
 
 The :class:`ProducerOSEngine` exposes methods to scan an inbox
 directory, classify audio files into deterministic buckets, move or
@@ -7,11 +7,15 @@ files with styling information, and generate logs and reports.  It
 also supports undoing the last run and repairing inconsistent
 styles.
 
-The engine is intentionally decoupled from any user interface and
-depends only on :class:`producer_os.config_service.ConfigService`
-and :class:`producer_os.styles_service.StyleService`.  This
-separation allows both the GUI wizard and the command‑line
-interface to share the same core logic.
+This v2 version introduces support for bucket rename mappings via
+:class:`producer_os.bucket_service.BucketService` and uses the
+standard *src layout* for packaging.  It remains intentionally
+decoupled from any user interface and depends only on
+:class:`producer_os.config_service.ConfigService`,
+:class:`producer_os.styles_service.StyleService`, and
+:class:`producer_os.bucket_service.BucketService`.  This separation
+allows both the GUI wizard and the command‑line interface to share the
+same core logic.
 """
 
 from __future__ import annotations
@@ -27,6 +31,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from .styles_service import StyleService
+from .bucket_service import BucketService
 
 
 # A classification is represented as a tuple:
@@ -42,6 +47,7 @@ class ProducerOSEngine:
     hub_dir: Path
     style_service: StyleService
     config: Dict[str, any]
+    bucket_service: BucketService = field(default_factory=BucketService)
     ignore_rules: Iterable[str] = field(default_factory=lambda: ["__MACOSX", ".DS_Store", "._"])
     confidence_threshold: float = 0.75
 
@@ -58,12 +64,27 @@ class ProducerOSEngine:
         "Leads": ["lead", "leads"],
         "Vox": ["vox", "vocal", "vocals", "acapella"],
         "FX": ["fx", "effect", "effects", "sweep", "sweeps", "riser", "risers", "impact", "impacts"],
-        "DrumLoop": ["drumloop", "drum_loop", "drum loop", "drum-loop", "loop drum", "loop_drums"],
-        "MelodyLoop": [
-            "melodic loop", "melodyloop", "melody_loop", "melody loop", "loop melody",
-            "melod", "chord", "chords", "guitar loop", "piano loop"
+        "DrumLoop": [
+            "drumloop",
+            "drum_loop",
+            "drum loop",
+            "drum-loop",
+            "loop drum",
+            "loop_drums",
         ],
-        "MIDI": [".mid", "mid file"]
+        "MelodyLoop": [
+            "melodic loop",
+            "melodyloop",
+            "melody_loop",
+            "melody loop",
+            "loop melody",
+            "melod",
+            "chord",
+            "chords",
+            "guitar loop",
+            "piano loop",
+        ],
+        "MIDI": [".mid", "mid file"],
     })
     # Map buckets to categories
     CATEGORY_MAP: Dict[str, str] = field(default_factory=lambda: {
@@ -161,7 +182,9 @@ class ProducerOSEngine:
         Returns a tuple of (category_dir, bucket_dir, pack_dir).
         """
         category_dir = self.hub_dir / category
-        bucket_dir = category_dir / bucket
+        # Use display name for bucket via bucket_service
+        display_bucket = self.bucket_service.get_display_name(bucket)
+        bucket_dir = category_dir / display_bucket
         pack_dir = bucket_dir / pack_name
         # Create directories
         pack_dir.mkdir(parents=True, exist_ok=True)
@@ -169,8 +192,10 @@ class ProducerOSEngine:
         category_style = self.style_service.resolve_style(bucket, category)
         self.style_service.write_nfo(self.hub_dir, category, category_style)
         bucket_style = self.style_service.resolve_style(bucket, category)
-        self.style_service.write_nfo(category_dir, bucket, bucket_style)
+        # Note: bucket .nfo goes next to category_dir
+        self.style_service.write_nfo(category_dir, display_bucket, bucket_style)
         pack_style = self.style_service.pack_style_from_bucket(bucket_style)
+        # Pack .nfo goes next to bucket_dir (sibling to pack folder)
         self.style_service.write_nfo(bucket_dir, pack_name, pack_style)
         return category_dir, bucket_dir, pack_dir
 
@@ -194,20 +219,36 @@ class ProducerOSEngine:
         else:  # dry-run, analyze, repair
             pass
 
-    def _log_audit_row(self, writer: csv.writer, file_path: Path, pack: Path, bucket: Optional[str], category: str,
-                        confidence: float, action: str, reason: str) -> None:
-        writer.writerow([
-            str(file_path),
-            pack.name,
-            category,
-            bucket or "UNSORTED",
-            f"{confidence:.2f}",
-            action,
-            reason
-        ])
+    def _log_audit_row(
+        self,
+        writer: csv.writer,
+        file_path: Path,
+        pack: Path,
+        bucket: Optional[str],
+        category: str,
+        confidence: float,
+        action: str,
+        reason: str,
+    ) -> None:
+        writer.writerow(
+            [
+                str(file_path),
+                pack.name,
+                category,
+                bucket or "UNSORTED",
+                f"{confidence:.2f}",
+                action,
+                reason,
+            ]
+        )
 
-    def run(self, mode: str = "analyze", overwrite_nfo: bool = False, normalize_pack_name: bool = False,
-            developer_options: Optional[Dict[str, bool]] = None) -> Dict[str, any]:
+    def run(
+        self,
+        mode: str = "analyze",
+        overwrite_nfo: bool = False,
+        normalize_pack_name: bool = False,
+        developer_options: Optional[Dict[str, bool]] = None,
+    ) -> Dict[str, any]:
         """Execute a run in the specified mode.
 
         ``mode`` may be ``analyze`` (collect stats only), ``dry-run``
@@ -245,7 +286,15 @@ class ProducerOSEngine:
             if mode == "move":
                 audit_file = open(audit_path, "w", newline="", encoding="utf-8")
                 audit_writer = csv.writer(audit_file)
-                audit_writer.writerow(["file", "pack", "category", "bucket", "confidence", "action", "reason"])
+                audit_writer.writerow([
+                    "file",
+                    "pack",
+                    "category",
+                    "bucket",
+                    "confidence",
+                    "action",
+                    "reason",
+                ])
             for pack_dir in packs:
                 pack_report = {
                     "pack": pack_dir.name,
@@ -264,6 +313,7 @@ class ProducerOSEngine:
                         dest_dir = self._ensure_unsorted_structure(pack_dir.name)
                         dest_path = dest_dir / rel_path
                         report["unsorted"] += 1
+                        # Build reason string with top candidates
                         reason = "; ".join([f"{b}:{score}" for b, score in candidates]) or "no matches"
                     else:
                         # Create hub structure and compute destination
@@ -282,15 +332,17 @@ class ProducerOSEngine:
                                 report["files_moved"] += 1
                             else:
                                 report["files_copied"] += 1
-                    pack_report["files"].append({
-                        "source": str(file_path),
-                        "dest": str(dest_path),
-                        "bucket": bucket or "UNSORTED",
-                        "category": category,
-                        "confidence": confidence,
-                        "action": action,
-                        "reason": reason,
-                    })
+                    pack_report["files"].append(
+                        {
+                            "source": str(file_path),
+                            "dest": str(dest_path),
+                            "bucket": bucket or "UNSORTED",
+                            "category": category,
+                            "confidence": confidence,
+                            "action": action,
+                            "reason": reason,
+                        }
+                    )
                     report["files_processed"] += 1
                     # Write audit row
                     if audit_writer:
@@ -302,7 +354,7 @@ class ProducerOSEngine:
                             bucket or "UNSORTED",
                             f"{confidence:.2f}",
                             audit_action,
-                            reason
+                            reason,
                         ])
                 report["packs"].append(pack_report)
             if audit_file:
@@ -347,7 +399,9 @@ class ProducerOSEngine:
                 category = row["category"]
                 pack = row["pack"] if "pack" in row else row["pack"]
                 if bucket != "UNSORTED":
-                    current_location = self.hub_dir / category / bucket / pack / src.name
+                    # Use display name for bucket when building current path
+                    display_bucket = self.bucket_service.get_display_name(bucket)
+                    current_location = self.hub_dir / category / display_bucket / pack / src.name
                 else:
                     current_location = self.hub_dir / "UNSORTED" / pack / src.name
                 if not current_location.exists():
@@ -363,7 +417,7 @@ class ProducerOSEngine:
         return {
             "restored": restored,
             "conflicts": conflicts,
-            "audit_file": str(audit_path)
+            "audit_file": str(audit_path),
         }
 
     def repair_styles(self) -> Dict[str, any]:
@@ -392,14 +446,17 @@ class ProducerOSEngine:
             for bucket_dir in category_dir.iterdir():
                 if not bucket_dir.is_dir() or self._should_ignore(bucket_dir.name):
                     continue
-                bucket = bucket_dir.name
-                # Bucket nfo
-                desired_nfos.add(category_dir / f"{bucket}.nfo")
+                # Determine bucket ID from display name
+                display_bucket = bucket_dir.name
+                bucket_id = self.bucket_service.get_bucket_id(display_bucket)
+                bucket = bucket_id if bucket_id else display_bucket
+                # Bucket nfo lives in category dir with display name
+                desired_nfos.add(category_dir / f"{display_bucket}.nfo")
                 for pack_dir in bucket_dir.iterdir():
                     if not pack_dir.is_dir() or self._should_ignore(pack_dir.name):
                         continue
                     pack = pack_dir.name
-                    # Pack nfo
+                    # Pack nfo lives in bucket dir
                     desired_nfos.add(bucket_dir / f"{pack}.nfo")
         # Create or update desired nfos
         for nfo_path in desired_nfos:
@@ -415,21 +472,23 @@ class ProducerOSEngine:
                     # Category style uses same bucket name for colour fallback
                     # but here we don't know bucket; treat bucket=category
                     style = self.style_service.resolve_style(category, category)
-                current = None
             else:
                 # Determine bucket or pack
                 grandparent = parent_dir.parent
                 if grandparent == self.hub_dir:
                     # Bucket nfo
                     category = parent_dir.name
-                    bucket = folder_name
-                    style = self.style_service.resolve_style(bucket, category)
+                    display_bucket = folder_name
+                    # Find bucket ID from display name for style resolution
+                    bucket_id = self.bucket_service.get_bucket_id(display_bucket) or display_bucket
+                    style = self.style_service.resolve_style(bucket_id, category)
                 else:
                     # Pack nfo
                     category = grandparent.name
-                    bucket = parent_dir.name
+                    display_bucket = parent_dir.name
+                    bucket_id = self.bucket_service.get_bucket_id(display_bucket) or display_bucket
                     style = self.style_service.pack_style_from_bucket(
-                        self.style_service.resolve_style(bucket, category)
+                        self.style_service.resolve_style(bucket_id, category)
                     )
             # Write nfo using style_service
             if nfo_path.exists():

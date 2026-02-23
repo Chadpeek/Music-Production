@@ -28,9 +28,13 @@ from __future__ import annotations
 import json
 import os
 import platform
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
+from json import JSONDecodeError
+from pathlib import Path
+from typing import Any
 
 try:
     import jsonschema
@@ -55,15 +59,13 @@ def _get_appdata_root(app_name: str = "ProducerOS") -> Path:
 
 
 def _load_json(file_path: Path) -> Any:
-    if not file_path.exists():
-        return None
-    with file_path.open("r", encoding="utf-8") as f:
-        return json.load(f)
+    with file_path.open("r", encoding="utf-8-sig") as f:
+    return json.load(f)
 
 
 def _save_json(data: Any, file_path: Path) -> None:
     file_path.parent.mkdir(parents=True, exist_ok=True)
-    with file_path.open("w", encoding="utf-8") as f:
+    with file_path.open("w", encoding="utf-8", newline="\n") as f:
         json.dump(data, f, indent=2)
 
 

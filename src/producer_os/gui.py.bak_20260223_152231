@@ -1,4 +1,4 @@
-﻿"""
+"""
 Producer OS GUI Wizard
 ======================
 
@@ -47,7 +47,7 @@ from typing import Any, Dict, Optional
 
 try:
     from PySide6.QtCore import Qt, QUrl, Signal, QObject
-    from PySide6.QtGui import QColor, QPalette, QDesktopServices, QDesktopServices
+    from PySide6.QtGui import QColor, QPalette, QDesktopServices
     from PySide6.QtWidgets import (
         QApplication,
         QMainWindow,
@@ -97,20 +97,11 @@ class EngineRunner(QObject):
 
     def _run(self) -> None:
         report = self.engine.run(mode=self.mode)
-
+        # Construct path to run report JSON
         run_id = report.get("run_id")
         hub_dir = self.engine.hub_dir
-
-        report_path = ""
-        try:
-            if run_id:
-                candidate = hub_dir / "logs" / str(run_id) / "run_report.json"
-                if candidate.exists():
-                    report_path = str(candidate)
-        except Exception:
-            report_path = ""
-
-        self.finished.emit(report, report_path)
+        report_path = hub_dir / "logs" / run_id / "run_report.json"
+        self.finished.emit(report, str(report_path))
 
 
 class WizardPage(QWidget):
@@ -414,8 +405,8 @@ class ProducerOSWizard(QMainWindow):
 
     def open_config_folder(self) -> None:
     # Open config directory in file explorer
-         cfg_dir = self.config_service.get_config_dir()
-         QDesktopServices.openUrl(QUrl.fromLocalFile(str(cfg_dir)))
+    cfg_dir = self.config_service.get_config_dir()
+    QDesktopServices.openUrl(QUrl.fromLocalFile(str(cfg_dir)))
 
     def open_last_report(self) -> None:
         # Find most recent run_report.json in hub logs
@@ -526,9 +517,6 @@ class ProducerOSWizard(QMainWindow):
         self.analyze_btn.setEnabled(True)
         self.run_btn.setEnabled(True)
         self.progress_bar.setVisible(False)
-        self.current_report = report
-        self.current_report_path = report_path
-        self.save_report_btn.setVisible(True)
         # Display summary
         summary_parts = []
         if report:
@@ -555,32 +543,24 @@ class ProducerOSWizard(QMainWindow):
         self.save_report_btn.setVisible(True)
 
     def save_run_report(self) -> None:
-        # Ask where to save
+        if not hasattr(self, "current_report_path") or not self.current_report_path:
+            return
+        # Ask where to save copy
         dest, _ = QFileDialog.getSaveFileName(
             self,
             "Save run report",
             str(Path.home() / "run_report.json"),
             "JSON files (*.json)"
         )
-        if not dest:
-            return
-
-        try:
-            # If we have a real report file from hub logs, copy it
-            if getattr(self, "current_report_path", "") and Path(self.current_report_path).exists():
-                data = Path(self.current_report_path).read_text(encoding="utf-8")
-                Path(dest).write_text(data, encoding="utf-8")
-            else:
-                # Otherwise (Analyze mode), save the in-memory report
-                report_obj = getattr(self, "current_report", {})
-                Path(dest).write_text(
-                    __import__("json").dumps(report_obj, indent=2),
-                    encoding="utf-8"
-                )
-
-            QMessageBox.information(self, "Save report", "Report saved successfully.")
-        except Exception as exc:
-            QMessageBox.warning(self, "Save report", f"Failed to save report: {exc}")
+        if dest:
+            try:
+                with open(self.current_report_path, "r", encoding="utf-8") as src:
+                    data = src.read()
+                with open(dest, "w", encoding="utf-8") as f:
+                    f.write(data)
+                QMessageBox.information(self, "Save report", "Report saved successfully.")
+            except Exception as exc:
+                QMessageBox.warning(self, "Save report", f"Failed to save report: {exc}")
 
     # ------------------------------------------------------------------
     # Navigation between pages
@@ -672,5 +652,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-
-

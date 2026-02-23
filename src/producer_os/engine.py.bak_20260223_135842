@@ -342,16 +342,8 @@ class ProducerOSEngine:
             duration = float(n) / float(sr)
             features["duration"] = duration
 
-                        # Frame params (adaptive for very short samples)
-            # Avoid librosa warnings and improve analysis of tiny one-shots.
             win = 2048
-            if N <= 0:
-                win = 1
-            elif N < win:
-                win = N  # must not exceed signal length
-
-            # Keep hop proportional and valid
-            hop = min(512, max(1, win // 4))
+            hop = 512
 
             S = np.abs(librosa.stft(y_norm, n_fft=win, hop_length=hop, window="hann"))
             P = S ** 2
@@ -696,7 +688,7 @@ class ProducerOSEngine:
         pack_dir.mkdir(parents=True, exist_ok=True)
 
         # Category .nfo lives in hub root (next to category folder)
-        category_style = self.style_service.resolve_style(category, category)
+        category_style = self.style_service.resolve_style(bucket, category)
         self.style_service.write_nfo(self.hub_dir, category, category_style)
 
         # Bucket .nfo lives in category folder (next to bucket folder)
@@ -738,73 +730,78 @@ class ProducerOSEngine:
         normalize_pack_name: bool = False,  # reserved for future
         developer_options: Optional[Dict[str, bool]] = None,
     ) -> Dict[str, Any]:
-        """Execute a run.
+    """
+    Execute a run in the specified mode.
 
-        Hard rules (tests):
-        - analyze: MUST NOT modify hub OR inbox (no logs, no cache write, no .nfo, no wrapping)
-        - dry-run: may write logs/reports, but MUST NOT copy/move and MUST NOT write .nfo
-        - copy/move: may copy/move, may write .nfo, may write cache/logs
-        - repair-styles: may regenerate .nfo and must remove orphan .nfo
+    Modes:
+      - analyze: NO filesystem changes (no hub logs, no cache writes, no .nfo, no inbox changes)
+      - dry-run: may write logs/reports, but NO copy/move and NO .nfo
+      - copy: copies files + writes .nfo
+      - move: moves files + writes .nfo + writes audit.csv for undo
+      - repair-styles: regenerates styles (.nfo) + removes orphans per hard rules
+    """
+    mode = (mode or "analyze").lower().strip()
+    self.current_mode = mode
 
-        Returns a report dict each run.
-        """
-        mode = (mode or "analyze").lower().strip()
-        self.current_mode = mode
+    # Hard rule flags (driven by tests)
+    write_hub = mode in {"copy", "move", "repair-styles"}          # may create hub structure / nfo / cache
+    write_logs = mode in {"dry-run", "copy", "move", "repair-styles"}  # analyze must NOT write logs
+    do_transfer = mode in {"copy", "move"}
 
-        write_hub = mode in {"copy", "move", "repair-styles"}              # .nfo + cache allowed
-        write_logs = mode in {"dry-run", "copy", "move", "repair-styles"} # analyze must not log
-        do_transfer = mode in {"copy", "move"}
+    # Report object (returned even in analyze with zero writes)
+    run_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_") + uuid.uuid4().hex[:8]
+    report: Dict[str, Any] = {
+        "run_id": run_id,
+        "mode": mode,
+        "timestamp": datetime.datetime.now().isoformat(),
+        "files_processed": 0,
+        "files_moved": 0,
+        "files_copied": 0,
+        "skipped_existing": 0,
+        "failed": 0,
+        "unsorted": 0,
+        "packs": [],
+    }
 
-        run_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_") + uuid.uuid4().hex[:8]
-        report: Dict[str, Any] = {
-            "run_id": run_id,
-            "mode": mode,
-            "timestamp": datetime.datetime.now().isoformat(),
-            "files_processed": 0,
-            "files_moved": 0,
-            "files_copied": 0,
-            "skipped_existing": 0,
-            "failed": 0,
-            "unsorted": 0,
-            "packs": [],
-        }
+    # ANALYZE MUST NOT MODIFY INBOX OR HUB
+    if mode == "analyze":
+        packs = self._discover_packs()
+        for pack_dir in packs:
+            pack_report = {"pack": pack_dir.name, "files": []}
 
-        # ANALYZE: absolutely no filesystem writes
-        if mode == "analyze":
-            packs = self._discover_packs()
-            for pack_dir in packs:
-                pack_report = {"pack": pack_dir.name, "files": []}
+            # Use os.walk to avoid descending into ignored dirs
+            for root, dirs, files in os.walk(pack_dir):
+                dirs[:] = [d for d in dirs if not self._should_ignore(d)]
+                files = [f for f in files if not self._should_ignore(f)]
 
-                for root, dirs, files in os.walk(pack_dir):
-                    dirs[:] = [d for d in dirs if not self._should_ignore(d)]
-                    files = [f for f in files if not self._should_ignore(f)]
+                for fname in files:
+                    file_path = Path(root) / fname
+                    if not file_path.is_file():
+                        continue
+                    # Only WAV by default
+                    if file_path.suffix.lower() != ".wav":
+                        continue
 
-                    for fname in files:
-                        file_path = Path(root) / fname
-                        if not file_path.is_file():
-                            continue
-                        if file_path.suffix.lower() != ".wav":
-                            continue
+                    bucket, category, confidence, candidates, low_confidence, reason_dict = self._classify_file(file_path)
 
-                        bucket, category, confidence, candidates, low_confidence, _reason_dict = self._classify_file(file_path)
-                        rel_path = file_path.relative_to(pack_dir)
+                    # No destination creation in analyze; only compute where it WOULD go
+                    if bucket is None:
+                        dest_path = self.hub_dir / "UNSORTED" / pack_dir.name / file_path.relative_to(pack_dir)
+                        report["unsorted"] += 1
+                        reason = "no matches"
+                        if candidates:
+                            reason = "; ".join([f"{b}:{int(s)}" for b, s in candidates])
+                    else:
+                        display_bucket = self.bucket_service.get_display_name(bucket)
+                        dest_path = self.hub_dir / category / display_bucket / pack_dir.name / file_path.relative_to(pack_dir)
+                        reason = f"best match: {bucket}, confidence={confidence:.2f}"
+                        if low_confidence:
+                            reason += "; low confidence"
+                        if candidates:
+                            reason += "; candidates: " + ", ".join([f"{b}:{int(s)}" for b, s in candidates])
 
-                        if bucket is None:
-                            dest_path = self.hub_dir / "UNSORTED" / pack_dir.name / rel_path
-                            report["unsorted"] += 1
-                            reason = "no matches"
-                            if candidates:
-                                reason = "; ".join([f"{b}:{int(s)}" for b, s in candidates])
-                        else:
-                            display_bucket = self.bucket_service.get_display_name(bucket)
-                            dest_path = self.hub_dir / category / display_bucket / pack_dir.name / rel_path
-                            reason = f"best match: {bucket}, confidence={confidence:.2f}"
-                            if low_confidence:
-                                reason += "; low confidence"
-                            if candidates:
-                                reason += "; candidates: " + ", ".join([f"{b}:{int(s)}" for b, s in candidates])
-
-                        pack_report["files"].append({
+                    pack_report["files"].append(
+                        {
                             "source": str(file_path),
                             "dest": str(dest_path),
                             "bucket": bucket or "UNSORTED",
@@ -812,119 +809,114 @@ class ProducerOSEngine:
                             "confidence": confidence,
                             "action": "NONE",
                             "reason": reason,
-                        })
-                        report["files_processed"] += 1
+                        }
+                    )
+                    report["files_processed"] += 1
 
-                report["packs"].append(pack_report)
+            report["packs"].append(pack_report)
 
-            return report
+        # IMPORTANT: no hub logs, no cache writes, no nfo writes
+        return report
 
-        # For modes other than analyze, we can write logs/reports
-        log_dir: Optional[Path] = None
-        audit_path: Optional[Path] = None
-        run_log_path: Optional[Path] = None
-        report_path: Optional[Path] = None
+    # For all other modes, we are allowed to write logs/reports (per tests)
+    log_dir: Optional[Path] = None
+    audit_path: Optional[Path] = None
+    run_log_path: Optional[Path] = None
+    report_path: Optional[Path] = None
 
-        if write_logs:
-            log_dir = self.hub_dir / "logs" / run_id
-            log_dir.mkdir(parents=True, exist_ok=True)
-            audit_path = log_dir / "audit.csv"
-            run_log_path = log_dir / "run_log.txt"
-            report_path = log_dir / "run_report.json"
+    if write_logs:
+        log_dir = self.hub_dir / "logs" / run_id
+        log_dir.mkdir(parents=True, exist_ok=True)
+        audit_path = log_dir / "audit.csv"
+        run_log_path = log_dir / "run_log.txt"
+        report_path = log_dir / "run_report.json"
 
-        # Only wrap loose inbox files in modes allowed to touch inbox
-        if mode in {"dry-run", "copy", "move"}:
-            self._wrap_loose_files()
+    # Only wrap loose inbox files in modes that are allowed to touch inbox
+    if mode in {"dry-run", "copy", "move"}:
+        self._wrap_loose_files()
 
-        if mode == "repair-styles":
-            actions = self.repair_styles()
-            report["repair_actions"] = actions
-            if write_logs and report_path:
-                report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
-            if write_hub:
-                self._save_feature_cache()
-            return report
+    # Handle repair-styles as a special operation
+    if mode == "repair-styles":
+        actions = self.repair_styles()
+        report["repair_actions"] = actions
+        if write_logs and report_path:
+            report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        return report
 
-        packs = self._discover_packs()
+    packs = self._discover_packs()
 
-        audit_file = None
-        audit_writer = None
-        log_handle = open(run_log_path, "w", encoding="utf-8", buffering=1) if write_logs and run_log_path else None
-        def _log(msg: str) -> None:
-            # Always show in console
-            print(msg)
-            # Also write to run_log.txt if enabled
-            if log_handle:
-                log_handle.write(msg + "\n")
-                log_handle.flush()
-    if log_handle:
-        log_handle.write(msg + "\n")
-        log_handle.flush()
+    audit_file = None
+    audit_writer = None
 
-        try:
-            if mode == "move" and audit_path:
-                audit_file = open(audit_path, "w", newline="", encoding="utf-8")
-                audit_writer = csv.writer(audit_file)
-                audit_writer.writerow(["file", "pack", "category", "bucket", "confidence", "action", "reason"])
+    # Open log file only if allowed
+    log_handle = open(run_log_path, "w", encoding="utf-8") if write_logs and run_log_path else None
+    try:
+        if mode == "move" and audit_path:
+            audit_file = open(audit_path, "w", newline="", encoding="utf-8")
+            audit_writer = csv.writer(audit_file)
+            audit_writer.writerow(["file", "pack", "category", "bucket", "confidence", "action", "reason"])
 
-            for pack_dir in packs:
-                pack_report = {"pack": pack_dir.name, "files": []}
+        for pack_dir in packs:
+            pack_report = {"pack": pack_dir.name, "files": []}
 
-                for root, dirs, files in os.walk(pack_dir):
-                    dirs[:] = [d for d in dirs if not self._should_ignore(d)]
-                    files = [f for f in files if not self._should_ignore(f)]
+            for root, dirs, files in os.walk(pack_dir):
+                dirs[:] = [d for d in dirs if not self._should_ignore(d)]
+                files = [f for f in files if not self._should_ignore(f)]
 
-                    for fname in files:
-                        file_path = Path(root) / fname
-                        if not file_path.is_file():
-                            continue
-                        if file_path.suffix.lower() != ".wav":
-                            continue
+                for fname in files:
+                    file_path = Path(root) / fname
+                    if not file_path.is_file():
+                        continue
+                    # Only WAV by default
+                    if file_path.suffix.lower() != ".wav":
+                        continue
 
-                        rel_path = file_path.relative_to(pack_dir)
-                        bucket, category, confidence, candidates, low_confidence, _reason_dict = self._classify_file(file_path)
+                    rel_path = file_path.relative_to(pack_dir)
+                    bucket, category, confidence, candidates, low_confidence, reason_dict = self._classify_file(file_path)
 
-                        if bucket is None:
-                            dest_dir = self._ensure_unsorted_structure(pack_dir.name) if write_hub else (self.hub_dir / "UNSORTED" / pack_dir.name)
-                            dest_path = dest_dir / rel_path
-                            report["unsorted"] += 1
-                            reason = "no matches"
-                            if candidates:
-                                reason = "; ".join([f"{b}:{int(s)}" for b, s in candidates])
+                    # Compute destination path (do NOT create it unless write_hub)
+                    if bucket is None:
+                        dest_dir = self._ensure_unsorted_structure(pack_dir.name) if write_hub else (self.hub_dir / "UNSORTED" / pack_dir.name)
+                        dest_path = dest_dir / rel_path
+                        report["unsorted"] += 1
+                        reason = "no matches"
+                        if candidates:
+                            reason = "; ".join([f"{b}:{int(s)}" for b, s in candidates])
+                    else:
+                        display_bucket = self.bucket_service.get_display_name(bucket)
+                        if write_hub:
+                            _, _, pack_dest_dir = self._ensure_hub_structure(category, bucket, pack_dir.name)
                         else:
-                            display_bucket = self.bucket_service.get_display_name(bucket)
-                            if write_hub:
-                                _, _, pack_dest_dir = self._ensure_hub_structure(category, bucket, pack_dir.name)
+                            pack_dest_dir = self.hub_dir / category / display_bucket / pack_dir.name
+                        dest_path = pack_dest_dir / rel_path
+
+                        reason = f"best match: {bucket}, confidence={confidence:.2f}"
+                        if low_confidence:
+                            reason += "; low confidence"
+                        if candidates:
+                            reason += "; candidates: " + ", ".join([f"{b}:{int(s)}" for b, s in candidates])
+
+                    action = "NONE"
+                    if do_transfer:
+                        try:
+                            if dest_path.exists():
+                                action = "SKIPPED"
+                                report["skipped_existing"] += 1
+                                reason += "; destination exists"
                             else:
-                                pack_dest_dir = self.hub_dir / category / display_bucket / pack_dir.name
-                            dest_path = pack_dest_dir / rel_path
-
-                            reason = f"best match: {bucket}, confidence={confidence:.2f}"
-                            if low_confidence:
-                                reason += "; low confidence"
-                            if candidates:
-                                reason += "; candidates: " + ", ".join([f"{b}:{int(s)}" for b, s in candidates])
-
-                        action = "NONE"
-                        if do_transfer:
-                            try:
-                                if dest_path.exists():
-                                    action = "SKIPPED"
-                                    report["skipped_existing"] += 1
-                                    reason += "; destination exists"
+                                self._move_or_copy(file_path, dest_path, mode)
+                                action = mode.upper()
+                                if mode == "move":
+                                    report["files_moved"] += 1
                                 else:
-                                    self._move_or_copy(file_path, dest_path, mode)
-                                    action = mode.upper()
-                                    if mode == "move":
-                                        report["files_moved"] += 1
-                                    else:
-                                        report["files_copied"] += 1
-                            except Exception as e:
-                                action = "FAILED"
-                                report["failed"] += 1
-                                reason += f"; move/copy failed: {e}"
+                                    report["files_copied"] += 1
+                        except Exception as e:
+                            action = "FAILED"
+                            report["failed"] += 1
+                            reason += f"; move/copy failed: {e}"
 
-                        pack_report["files"].append({
+                    pack_report["files"].append(
+                        {
                             "source": str(file_path),
                             "dest": str(dest_path),
                             "bucket": bucket or "UNSORTED",
@@ -932,11 +924,166 @@ class ProducerOSEngine:
                             "confidence": confidence,
                             "action": action,
                             "reason": reason,
-                        })
-                        report["files_processed"] += 1
+                        }
+                    )
+                    report["files_processed"] += 1
 
-                        if audit_writer:
-                            audit_writer.writerow([
+                    if audit_writer:
+                        audit_writer.writerow([
+                            str(file_path),
+                            pack_dir.name,
+                            category,
+                            bucket or "UNSORTED",
+                            f"{confidence:.2f}",
+                            action,
+                            reason,
+                        ])
+
+            report["packs"].append(pack_report)
+
+    finally:
+        if audit_file:
+            audit_file.close()
+        if log_handle:
+            log_handle.close()
+
+    # Save report JSON only if allowed
+    if write_logs and report_path:
+        report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+
+    # Persist feature cache ONLY if hub-writing mode (copy/move/repair-styles)
+    if write_hub:
+        self._save_feature_cache()
+
+    return report
+        """Execute a run.
+
+        Modes:
+        - analyze: scan + classify, no hub changes
+        - dry-run: compute destinations, no hub changes
+        - copy: copy files into hub
+        - move: move files into hub (writes audit.csv for undo)
+        - repair-styles: regenerate .nfo files under hub (no file moves)
+        """
+        self.current_mode = (mode or "analyze").lower().strip()
+        if self.current_mode not in {"analyze", "dry-run", "copy", "move", "repair-styles"}:
+            raise ValueError(f"Unknown mode: {mode}")
+
+        run_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_") + uuid.uuid4().hex[:8]
+        log_dir = self.hub_dir / "logs" / run_id
+        log_dir.mkdir(parents=True, exist_ok=True)
+        audit_path = log_dir / "audit.csv"
+        report_path = log_dir / "run_report.json"
+        run_log_path = log_dir / "run_log.txt"
+
+        report: Dict[str, Any] = {
+            "run_id": run_id,
+            "mode": self.current_mode,
+            "timestamp": datetime.datetime.now().isoformat(),
+            "files_processed": 0,
+            "files_moved": 0,
+            "files_copied": 0,
+            "unsorted": 0,
+            "skipped_existing": 0,
+            "failed": 0,
+            "packs": [],
+        }
+
+        # Repair styles mode: do only style regen
+        if self.current_mode == "repair-styles":
+            actions = self.repair_styles()
+            report["repair_styles"] = actions
+            report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+            return report
+
+        # Prepare inbox packs
+        self._wrap_loose_files()
+        packs = self._discover_packs()
+
+        audit_file = None
+        audit_writer = None
+        if self.current_mode == "move":
+            audit_file = open(audit_path, "w", newline="", encoding="utf-8")
+            audit_writer = csv.writer(audit_file)
+            audit_writer.writerow(["file", "pack", "category", "bucket", "confidence", "action", "reason", "dest"])
+
+        def log(line: str) -> None:
+            with open(run_log_path, "a", encoding="utf-8") as lf:
+                lf.write(line.rstrip() + "\n")
+
+        for pack_dir in packs:
+            pack_report = {"pack": pack_dir.name, "files": []}
+
+            # Walk pack contents; do not descend into ignored folders
+            for root, dirs, files in os.walk(pack_dir):
+                dirs[:] = [d for d in dirs if not self._should_ignore(d)]
+                files = [f for f in files if not self._should_ignore(f)]
+
+                for fname in files:
+                    file_path = Path(root) / fname
+                    if not file_path.is_file():
+                        continue
+
+                    # Only wav
+                    if file_path.suffix.lower() != ".wav":
+                        continue
+
+                    rel_path = file_path.relative_to(pack_dir)
+
+                    bucket, category, confidence, candidates, low_confidence, reason_dict = self._classify_file(file_path)
+
+                    dest_path: Optional[Path]
+                    if bucket is None:
+                        dest_dir = self._ensure_unsorted_structure(pack_dir.name) if self.current_mode in {"copy", "move"} else (self.hub_dir / "UNSORTED" / pack_dir.name)
+                        dest_path = dest_dir / rel_path
+                        report["unsorted"] += 1
+                        reason = "no matches"
+                        if candidates:
+                            reason = "candidates: " + ", ".join([f"{b}:{int(s)}" for b, s in candidates])
+                    else:
+                        _, _, pack_dest_dir = self._ensure_hub_structure(category, bucket, pack_dir.name)
+                        dest_path = pack_dest_dir / rel_path
+                        reason = f"best match: {bucket}, confidence={confidence:.2f}"
+                        if low_confidence:
+                            reason += "; low confidence"
+                        if candidates:
+                            reason += "; candidates: " + ", ".join([f"{b}:{int(s)}" for b, s in candidates])
+
+                    action = "NONE"
+                    if self.current_mode in {"copy", "move"}:
+                        if dest_path.exists():
+                            action = "SKIPPED"
+                            report["skipped_existing"] += 1
+                            reason += "; destination exists"
+                        else:
+                            try:
+                                self._move_or_copy(file_path, dest_path, self.current_mode)
+                                action = self.current_mode.upper()
+                                if self.current_mode == "move":
+                                    report["files_moved"] += 1
+                                else:
+                                    report["files_copied"] += 1
+                            except Exception as e:
+                                action = "FAILED"
+                                report["failed"] += 1
+                                reason += f"; move/copy failed: {e!s}"
+
+                    row = {
+                        "source": str(file_path),
+                        "dest": str(dest_path),
+                        "bucket": bucket or "UNSORTED",
+                        "category": category,
+                        "confidence": float(confidence),
+                        "action": action,
+                        "reason": reason,
+                        "reason_detail": reason_dict,
+                    }
+                    pack_report["files"].append(row)
+                    report["files_processed"] += 1
+
+                    if audit_writer:
+                        audit_writer.writerow(
+                            [
                                 str(file_path),
                                 pack_dir.name,
                                 category,
@@ -944,43 +1091,37 @@ class ProducerOSEngine:
                                 f"{confidence:.2f}",
                                 action,
                                 reason,
-                            ])
+                                str(dest_path),
+                            ]
+                        )
 
-                report["packs"].append(pack_report)
+                    log(f"[{action}] {file_path} -> {dest_path} :: {reason}")
 
-        finally:
-            if audit_file:
-                audit_file.close()
-            if log_handle:
-                log_handle.close()
+            report["packs"].append(pack_report)
 
-        if write_logs and report_path:
-            report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        if audit_file:
+            audit_file.close()
 
-        if write_hub:
-            self._save_feature_cache()
-
+        # Save JSON report
+        report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        self._save_feature_cache()
         return report
 
+    # ------------------------------------------------------------------
+    # Undo / repair
     def undo_last_run(self) -> Dict[str, Any]:
-        """Undo the most recent MOVE run using its audit.csv.
-
-        Returns:
-          - reverted_count: int
-          - conflicts: list[dict]
-        """
+        """Undo most recent MOVE run by reading its audit.csv dest column."""
         logs_root = self.hub_dir / "logs"
         if not logs_root.exists():
-            return {"reverted_count": 0, "conflicts": [], "error": "No logs found"}
+            return {"error": "No logs found"}
 
         audit_files = sorted(logs_root.rglob("audit.csv"), key=os.path.getmtime, reverse=True)
         if not audit_files:
-            return {"reverted_count": 0, "conflicts": [], "error": "No audit files found"}
+            return {"error": "No audit files found"}
 
         audit_path = audit_files[0]
-
         restored = 0
-        conflicts: List[Dict[str, str]] = []
+        conflicts = 0
 
         quarantine_dir = self.hub_dir / "Quarantine" / "UndoConflicts"
         quarantine_dir.mkdir(parents=True, exist_ok=True)
@@ -988,133 +1129,44 @@ class ProducerOSEngine:
         with open(audit_path, "r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             for row in reader:
-                try:
-                    if str(row.get("action", "")).upper() != "MOVE":
-                        continue
-
-                    src_path = Path(row["file"])
-                    category = row.get("category", "UNSORTED")
-                    bucket = row.get("bucket", "UNSORTED")
-                    pack = row.get("pack", "")
-
-                    # where it is now (hub)
-                    if bucket != "UNSORTED":
-                        display_bucket = self.bucket_service.get_display_name(bucket)
-                        current_location = self.hub_dir / category / display_bucket / pack / src_path.name
-                    else:
-                        current_location = self.hub_dir / "UNSORTED" / pack / src_path.name
-
-                    if not current_location.exists():
-                        continue
-
-                    dest_in_inbox = self.inbox_dir / src_path.name
-                    if dest_in_inbox.exists():
-                        qdest = quarantine_dir / src_path.name
-                        shutil.move(str(current_location), str(qdest))
-                        conflicts.append({"file": src_path.name, "quarantined_to": str(qdest)})
-                    else:
-                        shutil.move(str(current_location), str(dest_in_inbox))
-                        restored += 1
-                except Exception:
+                action = (row.get("action") or "").upper()
+                if action != "MOVE":
                     continue
 
-        return {
-            "reverted_count": restored,
-            "conflicts": conflicts,
-            "audit_file": str(audit_path),
-        }
+                src_str = row.get("file") or ""
+                dest_str = row.get("dest") or ""
+                if not src_str or not dest_str:
+                    continue
+
+                current_location = Path(dest_str)
+                if not current_location.exists():
+                    continue
+
+                dest_in_inbox = self.inbox_dir / Path(src_str).name
+                if dest_in_inbox.exists():
+                    shutil.move(str(current_location), str(quarantine_dir / dest_in_inbox.name))
+                    conflicts += 1
+                else:
+                    dest_in_inbox.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.move(str(current_location), str(dest_in_inbox))
+                    restored += 1
+
+        return {"restored": restored, "conflicts": conflicts, "audit_file": str(audit_path)}
 
     def repair_styles(self) -> Dict[str, Any]:
-        """Repair and regenerate missing/misplaced .nfo files.
+        """Regenerate required `.nfo` files under hub (conservative).
 
-        Hard rules (tests):
-        - Must remove orphan .nfo files (no corresponding folder)
-        - Must ignore hub internal folders like logs
+        Creates/updates:
+        - HUB/<Category>.nfo
+        - HUB/<Category>/<Bucket>.nfo
+        - HUB/<Category>/<Bucket>/<Pack>.nfo
+
+        Does NOT delete extra `.nfo` files.
         """
-        actions = {"created": 0, "updated": 0, "removed": 0}
+        actions = {"created": 0, "updated": 0}
 
-        # Build desired nfo set for categories/buckets/packs
-        desired_nfos: set[Path] = set()
-
-        for category_dir in self.hub_dir.iterdir():
-            if not category_dir.is_dir():
-                continue
-            if self._should_ignore(category_dir.name):
-                continue
-            if category_dir.name.lower() == "logs":
-                continue
-
-            category = category_dir.name
-            desired_nfos.add(self.hub_dir / f"{category}.nfo")
-
-            for bucket_dir in category_dir.iterdir():
-                if not bucket_dir.is_dir() or self._should_ignore(bucket_dir.name):
-                    continue
-                display_bucket = bucket_dir.name
-                desired_nfos.add(category_dir / f"{display_bucket}.nfo")
-
-                for pack_dir in bucket_dir.iterdir():
-                    if not pack_dir.is_dir() or self._should_ignore(pack_dir.name):
-                        continue
-                    desired_nfos.add(bucket_dir / f"{pack_dir.name}.nfo")
-
-        # Create/update desired nfos
-        for nfo_path in desired_nfos:
-            folder_name = nfo_path.stem
-            parent_dir = nfo_path.parent
-
-            if parent_dir == self.hub_dir:
-                category = folder_name
-                if category.upper() == "UNSORTED":
-                    style = DEFAULT_UNSORTED_STYLE
-                else:
-                    style = self.style_service.resolve_style(category, category)
-            else:
-                grandparent = parent_dir.parent
-                if grandparent == self.hub_dir:
-                    category = parent_dir.name
-                    display_bucket = folder_name
-                    bucket_id = self.bucket_service.get_bucket_id(display_bucket) or display_bucket
-                    style = self.style_service.resolve_style(bucket_id, category)
-                else:
-                    category = grandparent.name
-                    display_bucket = parent_dir.name
-                    bucket_id = self.bucket_service.get_bucket_id(display_bucket) or display_bucket
-                    style = self.style_service.pack_style_from_bucket(self.style_service.resolve_style(bucket_id, category))
-
-            new_contents = self.style_service._nfo_contents(style)
-
-            if nfo_path.exists():
-                try:
-                    old = nfo_path.read_text(encoding="utf-8").strip()
-                except Exception:
-                    old = ""
-                if old != new_contents.strip():
-                    self.style_service.write_nfo(parent_dir, folder_name, style)
-                    actions["updated"] += 1
-            else:
-                self.style_service.write_nfo(parent_dir, folder_name, style)
-                actions["created"] += 1
-
-        # Remove orphan nfos (no matching folder next to them)
-        for nfo in self.hub_dir.rglob("*.nfo"):
-            # ignore anything under logs
-            if "logs" in [p.lower() for p in nfo.parts]:
-                continue
-
-            if nfo.parent == self.hub_dir:
-                expected_folder = self.hub_dir / nfo.stem
-            else:
-                expected_folder = nfo.parent / nfo.stem
-
-            if not expected_folder.exists():
-                try:
-                    nfo.unlink()
-                    actions["removed"] += 1
-                except Exception:
-                    pass
-
-        return actions
+        if not self.hub_dir.exists():
+            return actions
 
         def ensure_write(parent: Path, name: str, style: Dict[str, Any]) -> None:
             nfo_path = parent / f"{name}.nfo"
@@ -1163,6 +1215,3 @@ class ProducerOSEngine:
                     ensure_write(bucket_dir, pack_dir.name, pack_style)
 
         return actions
-
-
-

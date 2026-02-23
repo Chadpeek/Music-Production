@@ -850,6 +850,7 @@ class ProducerOSEngine:
         audit_file = None
         audit_writer = None
         log_handle = open(run_log_path, "w", encoding="utf-8", buffering=1) if write_logs and run_log_path else None
+
         def _log(msg: str) -> None:
             # Always show in console
             print(msg)
@@ -857,10 +858,11 @@ class ProducerOSEngine:
             if log_handle:
                 log_handle.write(msg + "\n")
                 log_handle.flush()
-    if log_handle:
-        log_handle.write(msg + "\n")
-        log_handle.flush()
 
+        _log(f"Producer OS run_id={run_id} mode={mode}")
+        _log(f"Hub: {self.hub_dir}")
+        _log(f"Packs discovered: {len(packs)}")
+       
         try:
             if mode == "move" and audit_path:
                 audit_file = open(audit_path, "w", newline="", encoding="utf-8")
@@ -869,6 +871,8 @@ class ProducerOSEngine:
 
             for pack_dir in packs:
                 pack_report = {"pack": pack_dir.name, "files": []}
+                
+                _log(f"Processing pack: {pack_dir.name}")
 
                 for root, dirs, files in os.walk(pack_dir):
                     dirs[:] = [d for d in dirs if not self._should_ignore(d)]
@@ -946,20 +950,28 @@ class ProducerOSEngine:
                                 reason,
                             ])
 
+                _log(f"Finished pack: {pack_dir.name} files={len(pack_report['files'])}")
+
                 report["packs"].append(pack_report)
 
+            _log(
+                f"Done. processed={report['files_processed']} "
+                f"copied={report['files_copied']} moved={report['files_moved']} "
+                f"failed={report['failed']} unsorted={report['unsorted']} "
+                f"skipped={report['skipped_existing']}"
+            )
+            
         finally:
             if audit_file:
                 audit_file.close()
             if log_handle:
                 log_handle.close()
-
         if write_logs and report_path:
             report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
 
         if write_hub:
             self._save_feature_cache()
-
+        
         return report
 
     def undo_last_run(self) -> Dict[str, Any]:

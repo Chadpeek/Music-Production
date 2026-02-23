@@ -58,9 +58,11 @@ def _get_appdata_root(app_name: str = "ProducerOS") -> Path:
     return Path.home() / ".config" / app_name
 
 
-def _load_json(file_path: Path) -> Any:
-    with file_path.open("r", encoding="utf-8-sig") as f:
-    return json.load(f)
+def _load_json(path: Path) -> Any:
+    if not path.exists():
+        return None
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
 
 
 def _save_json(data: Any, file_path: Path) -> None:

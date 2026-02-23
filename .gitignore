@@ -1,0 +1,13 @@
+﻿__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Test data / local runs
+test_env/
+*.log
+*.tmp
+
+# OS junk
+.DS_Store
+Thumbs.db

@@ -42,6 +42,7 @@ from __future__ import annotations
 import sys
 import threading
 import json
+
 from pathlib import Path
 from typing import Any, Dict, Optional
 SortConfig = Dict[str, Any]
@@ -74,7 +75,8 @@ except ImportError:
 
 from producer_os.engine import ProducerOSEngine
 from producer_os.styles_service import StyleService
-from producer_os.config_service import load_config, save_config
+from producer_os.config_service import ConfigService
+from producer_os.bucket_service import BucketService
 
 print("Producer OS GUI starting...")
 
@@ -661,6 +663,7 @@ class ProducerOSWizard(QMainWindow):
 
 
 def main() -> int:
+    # create QApplication, show window, exec
     """Entry point for launching the GUI from the command line."""
     if PySide6 is None:
         print("Error: PySide6 is not installed. Please install PySide6 to use the GUI.")

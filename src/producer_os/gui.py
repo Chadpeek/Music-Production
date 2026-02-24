@@ -41,8 +41,10 @@ from __future__ import annotations
 
 import sys
 import threading
+import json
 from pathlib import Path
 from typing import Any, Dict, Optional
+SortConfig = Dict[str, Any]
 
 try:
     from PySide6.QtCore import Qt, QUrl, Signal, QObject
@@ -70,11 +72,11 @@ except ImportError:
     # PySide6 is optional; if not installed the GUI cannot be used.
     PySide6 = None  # type: ignore
 
-from .config_service import ConfigService
-from .styles_service import StyleService
-from .bucket_service import BucketService
-from .engine import ProducerOSEngine
+from producer_os.engine import ProducerOSEngine
+from producer_os.styles_service import StyleService
+from producer_os.config_service import load_config, save_config
 
+print("Producer OS GUI starting...")
 
 class EngineRunner(QObject):
     """Helper to run the engine on a background thread.

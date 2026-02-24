@@ -1,5 +1,8 @@
 ﻿.venv*/
-build_*.build/
-build_*.dist/
+dist*/
+build*/
+*.build
+*.dist
 __pycache__/
 *.pyc
+.nuitka_tmp/

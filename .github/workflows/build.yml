@@ -2,42 +2,54 @@ name: Build
 
 on:
   push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+    branches: [ "main" ]
+  workflow_dispatch:
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: windows-2025
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Install package + dev deps
+        shell: pwsh
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
-
-      # Optional: only keep this if your GUI build actually needs it in CI
-      - name: Install PySide6 (optional)
-        run: |
           python -m pip install PySide6
 
       - name: Ruff (lint)
-        run: |
-          ruff check src tests
+        run: ruff check src tests
 
       - name: Run tests
-        run: |
-          pytest -q --disable-warnings
+        run: pytest -q --disable-warnings
 
-      - name: Build (placeholder)
+      - name: Build EXE (Nuitka)
+        shell: pwsh
         run: |
-          echo "Nuitka build steps would go here."
-          echo "Inno Setup packaging would run afterwards."
+          # Clean output folders
+          if (Test-Path dist) { Remove-Item -Recurse -Force dist }
+          if (Test-Path build) { Remove-Item -Recurse -Force build }
+
+          # Build one-file exe
+          python -m nuitka `
+            --standalone `
+            --onefile `
+            --assume-yes-for-downloads `
+            --follow-imports `
+            --plugin-enable=pyside6 `
+            --output-dir=dist `
+            --output-filename=ProducerOS.exe `
+            --windows-console-mode=disable `
+            --main=src/producer_os/gui.py
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ProducerOS-windows
+          path: dist/ProducerOS.exe

@@ -19,15 +19,10 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Set
-from unittest.mock import patch
 
 import pytest
 
 # Add src to path for imports
-import sys
-SRC_DIR = Path(__file__).resolve().parents[1] / "src"
-sys.path.insert(0, str(SRC_DIR))
 
 from producer_os.engine import ProducerOSEngine
 from producer_os.styles_service import StyleService
@@ -113,7 +108,7 @@ def engine(inbox_with_packs: Path, hub_dir: Path, default_styles: dict, default_
 
 def test_nfo_only_folder_level(engine: ProducerOSEngine, hub_dir: Path):
     """Verify .nfo files are written only at folder level, never next to audio."""
-    report = engine.run(mode="copy")
+    engine.run(mode="copy")
     
     # Walk entire hub
     for root, dirs, files in os.walk(hub_dir):
@@ -150,7 +145,7 @@ def test_nfo_only_folder_level(engine: ProducerOSEngine, hub_dir: Path):
 def test_nfo_idempotent_rewrite(engine: ProducerOSEngine, hub_dir: Path):
     """Verify .nfo files are NOT rewritten if content is identical."""
     # First run
-    report1 = engine.run(mode="copy")
+    engine.run(mode="copy")
     
     # Collect .nfo mtime after first run
     nfo_mtimes_before: dict = {}
@@ -161,7 +156,7 @@ def test_nfo_idempotent_rewrite(engine: ProducerOSEngine, hub_dir: Path):
     time.sleep(0.2)
     
     # Second run with identical input
-    report2 = engine.run(mode="copy")
+    engine.run(mode="copy")
     
     # Verify .nfo files were NOT modified (mtimes unchanged)
     nfo_mtimes_after: dict = {}
@@ -410,7 +405,7 @@ def test_repair_styles_regenerates_missing(engine: ProducerOSEngine, hub_dir: Pa
     nfo_count_before = len(list(hub_dir.rglob("*.nfo")))
     
     # Repair
-    report = engine.repair_styles()
+    engine.repair_styles()
     
     nfo_count_after = len(list(hub_dir.rglob("*.nfo")))
     
@@ -435,10 +430,10 @@ def test_repair_styles_removes_orphans(engine: ProducerOSEngine, hub_dir: Path):
     assert orphan_nfo.exists(), "Orphan .nfo should be created"
     
     # Repair
-    report = engine.repair_styles()
+    engine.repair_styles()
     
     assert not orphan_nfo.exists(), (
-        f"HARD RULE VIOLATION: repair-styles should remove orphan .nfo files"
+        "HARD RULE VIOLATION: repair-styles should remove orphan .nfo files"
     )
     print("✓ repair-styles removed orphan .nfo files")
 
@@ -607,7 +602,7 @@ def test_ignores_macosx_and_dotfiles(engine: ProducerOSEngine, inbox_with_packs:
     (macosx_dir / "ignored.wav").write_text("ignore this", encoding="utf-8")
     
     # Run copy
-    report = engine.run(mode="copy")
+    engine.run(mode="copy")
     
     # Verify ignored files are NOT in hub
     hub_contents = set(hub_dir.rglob("*"))
@@ -629,7 +624,7 @@ def test_handles_nested_subdirectories(engine: ProducerOSEngine, inbox_with_pack
     (nested / "kick_sample.wav").write_text("nested kick", encoding="utf-8")
     
     # Run copy
-    report = engine.run(mode="copy")
+    engine.run(mode="copy")
     
     # Verify nested structure preserved in hub
     hub_nested_files = list(hub_dir.rglob("kick_sample.wav"))

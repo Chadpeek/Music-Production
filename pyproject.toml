@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=42", "wheel"]
+requires = ["setuptools>=61", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,11 +7,12 @@ name = "producer-os"
 version = "0.1.0"
 description = "Producer OS – organise music sample packs and apply FL Studio folder styling"
 authors = [
-    { name = "Producer OS Contributors", email = "maintainers@example.com" },
+  { name = "KidChadd", email = "kidchadd@users.noreply.github.com" },
 ]
-license = { file = "LICENSE" }
+license = "GPL-3.0-only"
+license-files = ["LICENSE"]
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 dependencies = [
     "numpy>=1.23",
     "librosa>=0.10",
@@ -32,5 +33,5 @@ dev = [
 line-length = 120
 
 [tool.mypy]
-python_version = "3.9"
+python_version = "3.11"
 ignore_missing_imports = true

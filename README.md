@@ -26,14 +26,14 @@
 Producer-OS is a safety-first, rule-driven file organizer for music producers.  
 It organizes sample packs, audio files, MIDI packs, presets, and DAW project files using structured JSON rules and schema validation.
 
-Built with Python and PySide6, it provides both:
+Built with Python and PySide6, it provides:
 
 - A desktop GUI application  
 - A command-line interface (CLI) for automation workflows  
 
 ---
 
-## What Is Producer-OS?
+# What Is Producer-OS?
 
 Producer-OS is a rule-based sample pack organizer designed for serious music production environments.
 
@@ -54,30 +54,7 @@ Every action is logged and traceable.
 
 ---
 
-## Why Producer-OS?
-
-Large sample libraries become unmanageable quickly.
-
-Most file organizers are:
-
-- Extension-based  
-- Pattern-based  
-- Opaque in their decisions  
-- Risky in destructive behavior  
-
-Producer-OS is designed to be:
-
-- Rule-based  
-- Schema-validated  
-- Non-destructive by default  
-- Fully logged  
-- Predictable and explainable  
-
-Automation without sacrificing control.
-
----
-
-## Core Features
+# Core Features
 
 - Rule-based sorting engine  
 - Shared engine powering both GUI and CLI  
@@ -87,23 +64,11 @@ Automation without sacrificing control.
 - CLI for scripted and headless workflows  
 - Detailed logging of file decisions  
 - Automatic UNSORTED and Quarantine routing  
-- Modular architecture for extensibility  
+- Modular architecture  
 
 ---
 
-## Demo
-
-![Demo](assets/demo.gif)
-
----
-
-## Screenshot
-
-![Screenshot](assets/screenshot.png)
-
----
-
-## Installation
+# Installation
 
 ```powershell
 git clone https://github.com/KidChadd/Producer-OS.git
@@ -111,97 +76,107 @@ cd Producer-OS
 
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install -e .
+
+python -m pip install --upgrade pip
+pip install -e ".[gui]"
 ```
 
-Run the GUI:
+---
 
-```bash
-python -m producer_os
+# Run
+
+## CLI
+
+```powershell
+producer-os --help
+producer-os dry-run -h
 ```
 
-Run the CLI:
+## GUI
 
-```bash
+```powershell
+producer-os-gui
+```
+
+## Module Entry (Optional)
+
+```powershell
+python -m producer_os --help
+python -m producer_os gui
 python -m producer_os.cli --help
 ```
 
 ---
 
-## Development Setup
+# Example CLI Usage
+
+## Dry-run (no changes)
+
+```powershell
+producer-os dry-run C:\path\to\inbox C:\path\to\hub --verbose
+```
+
+## Copy into hub (non-destructive)
+
+```powershell
+producer-os copy C:\path\to\inbox C:\path\to\hub
+```
+
+## Move into hub (destructive, logged)
+
+```powershell
+producer-os move C:\path\to\inbox C:\path\to\hub
+```
+
+## Analyze (report only)
+
+```powershell
+producer-os analyze C:\path\to\inbox C:\path\to\hub
+```
+
+---
+
+# Development Setup
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install -e ".[dev]"
-python -m pytest -q
+
+python -m pip install --upgrade pip
+pip install -e ".[dev,gui]"
+
+ruff check src tests
+mypy src/producer_os
+pytest -q
 ```
 
 ---
 
-## Example CLI Usage
+# Build (wheel + sdist)
 
-```bash
-python -m producer_os.cli sort --config path/to/config.json
+```powershell
+python -m pip install --upgrade build
+python -m build
 ```
 
-All file operations are validated and logged according to your configuration.
+Artifacts are written to `dist/`.
 
 ---
 
-## Configuration System
+# Configuration System
 
 Producer-OS uses structured JSON configuration files:
 
-- `config.json` — global settings and runtime options  
-- `buckets.json` — rule definitions and classification logic  
-- `bucket_styles.json` — GUI styling metadata  
+- `config.json`
+- `buckets.json`
+- `bucket_styles.json`
 
-Before sorting begins, configuration files are validated against JSON schemas.  
+All configurations are validated against JSON schemas before execution.  
 Invalid configurations block execution.
 
 ---
 
-## Architecture Overview
-
-Producer-OS separates sorting logic, services, interfaces, and schema validation into distinct layers.
-
-```mermaid
-flowchart TD
-    subgraph EngineLayer [Engine]
-        Engine[Rule based sorting engine]
-    end
-
-    subgraph ServicesLayer [Services]
-        FileService[File system service]
-        LogService[Logging service]
-        ConfigService[Configuration service]
-    end
-
-    subgraph InterfacesLayer [User Interfaces]
-        Gui[PySide6 desktop GUI]
-        Cli[Command line interface]
-    end
-
-    subgraph SchemasLayer [Schemas]
-        JsonConfigs[JSON configs\nbuckets bucket_styles config]
-        JsonSchemas[JSON schema definitions]
-    end
-
-    Gui --> Engine
-    Cli --> Engine
-
-    Engine --> FileService
-    Engine --> LogService
-    Engine --> ConfigService
-
-    ConfigService --> JsonConfigs
-    ConfigService --> JsonSchemas
-```
-
----
-
-## Safety Model
+# Safety Model
 
 Producer-OS enforces:
 
@@ -209,20 +184,30 @@ Producer-OS enforces:
 - Schema validation before sorting  
 - Routing of unmatched files to UNSORTED  
 - Routing of unsafe files to Quarantine  
-- Full logging of decisions and file actions  
+- Full logging of file actions  
 
 ---
 
-## Requirements
+# Requirements
 
 - Python 3.11+  
 - Desktop environment capable of running PySide6  
 - Dependencies managed via `pyproject.toml`  
-- Access to your music production directories  
 
 ---
 
-## Documentation
+# Continuous Integration
+
+GitHub Actions runs:
+
+- Ruff (lint)  
+- Mypy (type checking)  
+- Pytest  
+- Package build validation  
+
+---
+
+# Documentation
 
 - `RULES_AND_USAGE.md`  
 - `TESTING_GUIDE.md`  
@@ -231,52 +216,7 @@ Producer-OS enforces:
 
 ---
 
-## Roadmap
-
-Planned and ongoing improvements:
-
-- Expanded rule primitives  
-- Additional bucket presets  
-- In-application configuration editors  
-- Enhanced dry-run and diff reporting  
-- Improved GUI log inspection tools  
-
----
-
-## FAQ
-
-**Does Producer-OS delete files?**  
-No. It moves or copies files according to rules.
-
-**Can I customize buckets and styles?**  
-Yes. Buckets and styles are defined in JSON configuration files.
-
-**Does it support CLI automation?**  
-Yes. The CLI supports scripted and automated workflows.
-
-**Is configuration validated before sorting?**  
-Yes. JSON schema validation runs before any file operations.
-
-**Do GUI and CLI share the same engine?**  
-Yes. Both interfaces use the same core engine and configuration layer.
-
----
-
-## Contributing
-
-Fork the repository and create a feature branch from `main`.  
-Keep changes focused and use clear commit messages.  
-Open a pull request describing your changes and their impact.
-
----
-
-## License
-
-GNU General Public License v3.0 (GPL-3.0).  
-See `LICENSE` for full details.
-
-
-## Star History
+## ⭐ Star History
 
 <a href="https://www.star-history.com/#KidChadd/Producer-OS&type=date&legend=top-left">
  <picture>
@@ -285,3 +225,11 @@ See `LICENSE` for full details.
    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=KidChadd/Producer-OS&type=date&legend=top-left" />
  </picture>
 </a>
+
+---
+
+# License
+
+GNU General Public License v3.0 (GPL-3.0)
+
+See `LICENSE` for full details.

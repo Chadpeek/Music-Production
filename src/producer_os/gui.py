@@ -656,14 +656,14 @@ class ProducerOSWizard(QMainWindow):
 
 
 def main() -> int:
-    """Entry point for launching the GUI from the command line."""
-    try:
-        from PySide6.QtWidgets import QApplication
-    except ModuleNotFoundError:
-        print("Error: PySide6 is not installed. Please install PySide6 to use the GUI.")
-        return 1
+    from PySide6.QtWidgets import QApplication
 
     app = QApplication(sys.argv)
-    wizard = ProducerOSWizard()
-    wizard.show()
+
+    win = ProducerOSWizard()  # <-- replace with actual class
+    win.show()
+
     return app.exec()
+
+if __name__ == "__main__":
+    raise SystemExit(main())

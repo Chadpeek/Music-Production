@@ -12,8 +12,10 @@
     <img src="https://img.shields.io/badge/License-GPL--3.0-green" alt="GPL-3.0 License" />
   </a>
   <img src="https://img.shields.io/badge/Status-Active%20Development-orange" alt="Active Development" />
+  <a href="https://github.com/KidChadd/Producer-OS/actions/workflows/python.yml">
+    <img src="https://img.shields.io/github/actions/workflow/status/KidChadd/Producer-OS/python.yml?label=CI" alt="CI" />
+  </a>
 </p>
-
 ---
 
 > Current Version: 0.x (Active Development)
@@ -238,6 +240,18 @@ Yes. Both interfaces use the same rule-based engine, services, and configuration
 ## Contributing
 
 Contributions are welcome. Please fork the repository and create a feature branch from the main branch. Make your changes with clear, descriptive commit messages and keep changes focused. Open a pull request describing your changes and how they relate to Producer-OS behavior.
+
+## Windows (PowerShell)
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -e ".[dev]"
+python -m pytest -q
+
+## macOS / Linux
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e ".[dev]"
+python -m pytest -q
 
 ---
 

@@ -2,7 +2,7 @@
 docuwriter_upload/
 ProducerOS-docuwriter-upload.zip
 tree.clean.txt
-
+*.bak
 # Virtual environments
 .venv*/
 env*/

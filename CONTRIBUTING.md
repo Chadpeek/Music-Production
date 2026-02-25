@@ -11,9 +11,10 @@ help us maintain a friendly and productive community.
    creating a virtual environment and installing dependencies with pip:
 
    ```bash
-   python3 -m venv venv
-   source venv/bin/activate
-   pip install -r requirements.txt
+   python -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   python -m pip install -e ".[dev]"
+   python -m pytest -q
    ```
 
 2. **Run tests**: Before making changes, ensure the existing test suite
@@ -68,5 +69,4 @@ Please report unacceptable behaviour to the maintainers.
 
 ## License
 
-By contributing to this project you agree that your contributions will be
-licensed under the MIT license.
+By contributing, you agree your contributions are licensed under the project’s license (GPL-3.0).

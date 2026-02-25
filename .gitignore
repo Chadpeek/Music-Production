@@ -35,3 +35,7 @@ Thumbs.db
 !build/installer/
 !build/installer/**
 !build/installer/ProducerOS.iss
+
+# Runtime directories
+_hub/
+_inbox/

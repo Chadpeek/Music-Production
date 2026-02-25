@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "producer-os"
-version = "0.1.0"
+version = "0.1.1"
 description = "Producer OS – organise music sample packs and apply FL Studio folder styling"
 authors = [
   { name = "KidChadd", email = "kidchadd@users.noreply.github.com" },
@@ -21,8 +21,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-gui = ["PySide6>=6.5"]
-dev = ["pytest", "ruff", "mypy", "nuitka>=2.5", "zstandard>=0.23"]
+dev = [
+  "pytest",
+  "ruff",
+  "mypy",
+  "nuitka>=2.5",
+  "zstandard>=0.23",
+  "python-semantic-release>=9.0.0"
+]
 
 [tool.ruff]
 line-length = 120
@@ -34,3 +40,9 @@ ignore_missing_imports = true
 [project.scripts]
 producer-os = "producer_os.cli:main"
 producer-os-gui = "producer_os.gui:main"
+
+[tool.semantic_release]
+tag_format = "v{version}"
+version_variables = ["pyproject.toml:project.version"]
+commit_parser = "conventional"
+major_on_zero = true

@@ -212,13 +212,17 @@ class ConfigService:
         if schema_path.exists():
             _validate_json(buckets, schema_path)
         _save_json(buckets, self.get_buckets_path(cli_portable))
+
     def is_portable_mode(self) -> bool:
         """Portable mode is enabled when portable.flag exists in app_dir."""
         try:
             return (self.app_dir / "portable.flag").exists()
         except Exception:
-            return False        
+            return False
+
+
 # --- module-level convenience wrappers (keeps GUI imports stable) ---
+
 
 def get_app_dir() -> Path:
     # Frozen exe (Nuitka/onefile/standalone) -> folder containing the exe

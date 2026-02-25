@@ -1,4 +1,4 @@
-﻿"""
+"""
 Producer OS GUI Wizard
 
 This module implements a full wizard interface for Producer OS
@@ -46,12 +46,12 @@ from producer_os.styles_service import StyleService
 from producer_os.config_service import ConfigService
 from producer_os.bucket_service import BucketService
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, cast
+
 SortConfig = Dict[str, Any]
 
 try:
-    
-    from PySide6.QtCore import Qt, QUrl, Signal, QObject
+    from PySide6.QtCore import QUrl, Signal, QObject
     from PySide6.QtGui import QColor, QPalette, QDesktopServices
     from PySide6.QtWidgets import (
         QApplication,
@@ -73,9 +73,8 @@ try:
     )
 # PySide6 is required for the GUI module.
 except ImportError as e:
-    raise RuntimeError(
-        "PySide6 is required to run Producer OS GUI. Install it (e.g. `pip install PySide6`)."
-    ) from e
+    raise RuntimeError("PySide6 is required to run Producer OS GUI. Install it (e.g. `pip install PySide6`).") from e
+
 
 class EngineRunner(QObject):
     """Helper to run the engine on a background thread.
@@ -118,9 +117,9 @@ class WizardPage(QWidget):
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(10, 10, 10, 10)
-        self.layout.setSpacing(6)
+        self.page_layout = QVBoxLayout(self)
+        self.page_layout.setContentsMargins(10, 10, 10, 10)
+        self.page_layout.setSpacing(6)
 
 
 class ProducerOSWizard(QMainWindow):
@@ -188,7 +187,7 @@ class ProducerOSWizard(QMainWindow):
         page = WizardPage()
         title = QLabel("Step 1 – Choose Inbox (Source)")
         title.setStyleSheet("font-weight: bold; font-size: 18px;")
-        page.layout.addWidget(title)
+        page.page_layout.addWidget(title)
         form_layout = QFormLayout()
         # Inbox path
         self.inbox_edit = QLineEdit(self.state.get("inbox_path", ""))
@@ -206,7 +205,7 @@ class ProducerOSWizard(QMainWindow):
         self.dry_run_checkbox.setChecked(self.state.get("dry_run", False))
         self.dry_run_checkbox.toggled.connect(self.on_dry_run_changed)
         form_layout.addRow(self.dry_run_checkbox)
-        page.layout.addLayout(form_layout)
+        page.page_layout.addLayout(form_layout)
         # Update preview when path changes
         self.inbox_edit.textChanged.connect(self.update_inbox_preview)
         # Initial preview
@@ -214,7 +213,9 @@ class ProducerOSWizard(QMainWindow):
         return page
 
     def browse_inbox(self) -> None:
-        directory = QFileDialog.getExistingDirectory(self, "Select Inbox Folder", self.inbox_edit.text() or str(Path.home()))
+        directory = QFileDialog.getExistingDirectory(
+            self, "Select Inbox Folder", self.inbox_edit.text() or str(Path.home())
+        )
         if directory:
             self.inbox_edit.setText(directory)
             self.state["inbox_path"] = directory
@@ -251,7 +252,7 @@ class ProducerOSWizard(QMainWindow):
         page = WizardPage()
         title = QLabel("Step 2 – Choose Hub (Destination)")
         title.setStyleSheet("font-weight: bold; font-size: 18px;")
-        page.layout.addWidget(title)
+        page.page_layout.addWidget(title)
         form_layout = QFormLayout()
         # Hub path
         self.hub_edit = QLineEdit(self.state.get("hub_path", ""))
@@ -274,7 +275,7 @@ class ProducerOSWizard(QMainWindow):
         self.hub_warning_label = QLabel("")
         self.hub_warning_label.setStyleSheet("color: red;")
         form_layout.addRow("", self.hub_warning_label)
-        page.layout.addLayout(form_layout)
+        page.page_layout.addLayout(form_layout)
         # Update warning when path or inbox changes
         self.hub_edit.textChanged.connect(self.update_hub_warning)
         self.inbox_edit.textChanged.connect(self.update_hub_warning)
@@ -283,7 +284,9 @@ class ProducerOSWizard(QMainWindow):
         return page
 
     def browse_hub(self) -> None:
-        directory = QFileDialog.getExistingDirectory(self, "Select Hub Folder", self.hub_edit.text() or str(Path.home()))
+        directory = QFileDialog.getExistingDirectory(
+            self, "Select Hub Folder", self.hub_edit.text() or str(Path.home())
+        )
         if directory:
             self.hub_edit.setText(directory)
             self.state["hub_path"] = directory
@@ -319,7 +322,7 @@ class ProducerOSWizard(QMainWindow):
         page = WizardPage()
         title = QLabel("Step 3 – Options")
         title.setStyleSheet("font-weight: bold; font-size: 18px;")
-        page.layout.addWidget(title)
+        page.page_layout.addWidget(title)
         form_layout = QFormLayout()
         # File types
         self.wav_checkbox = QCheckBox("WAV")
@@ -381,7 +384,7 @@ class ProducerOSWizard(QMainWindow):
         form_layout.addRow(self.dev_buttons_container)
         # Hide dev buttons if tools off
         self.dev_buttons_container.setVisible(self.dev_checkbox.isChecked())
-        page.layout.addLayout(form_layout)
+        page.page_layout.addLayout(form_layout)
         return page
 
     def on_file_type_changed(self, ext: str, checked: bool) -> None:
@@ -409,9 +412,9 @@ class ProducerOSWizard(QMainWindow):
         self.dev_buttons_container.setVisible(checked)
 
     def open_config_folder(self) -> None:
-    # Open config directory in file explorer
-         cfg_dir = self.config_service.get_config_dir()
-         QDesktopServices.openUrl(QUrl.fromLocalFile(str(cfg_dir)))
+        # Open config directory in file explorer
+        cfg_dir = self.config_service.get_config_dir()
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(cfg_dir)))
 
     def open_last_report(self) -> None:
         # Find most recent run_report.json in hub logs
@@ -439,11 +442,7 @@ class ProducerOSWizard(QMainWindow):
             self.config_service.load_config()
             self.config_service.load_styles()
             self.config_service.load_buckets()
-            QMessageBox.information(
-                self,
-                "Schema validation",
-                "All configuration files are valid."
-            )
+            QMessageBox.information(self, "Schema validation", "All configuration files are valid.")
         except Exception as exc:
             QMessageBox.warning(self, "Schema validation", f"Validation failed: {exc}")
 
@@ -453,14 +452,14 @@ class ProducerOSWizard(QMainWindow):
         page = WizardPage()
         title = QLabel("Step 4 – Run")
         title.setStyleSheet("font-weight: bold; font-size: 18px;")
-        page.layout.addWidget(title)
+        page.page_layout.addWidget(title)
         # Buttons for analyze and run
         btn_layout = QHBoxLayout()
         self.analyze_btn = QPushButton("Analyze")
         self.run_btn = QPushButton("Run")
         btn_layout.addWidget(self.analyze_btn)
         btn_layout.addWidget(self.run_btn)
-        page.layout.addLayout(btn_layout)
+        page.page_layout.addLayout(btn_layout)
         # Connect signals
         self.analyze_btn.clicked.connect(lambda: self.start_engine_run("analyze"))
         self.run_btn.clicked.connect(lambda: self.start_engine_run(self.state.get("action", "move")))
@@ -468,19 +467,19 @@ class ProducerOSWizard(QMainWindow):
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 0)  # indeterminate by default
         self.progress_bar.setVisible(False)
-        page.layout.addWidget(self.progress_bar)
+        page.page_layout.addWidget(self.progress_bar)
         # Log / output area
         self.log_edit = QTextEdit()
         self.log_edit.setReadOnly(True)
-        page.layout.addWidget(self.log_edit)
+        page.page_layout.addWidget(self.log_edit)
         # Summary label
         self.summary_label = QLabel("")
-        page.layout.addWidget(self.summary_label)
+        page.page_layout.addWidget(self.summary_label)
         # Save report button
         self.save_report_btn = QPushButton("Save run report…")
         self.save_report_btn.setVisible(False)
         self.save_report_btn.clicked.connect(self.save_run_report)
-        page.layout.addWidget(self.save_report_btn)
+        page.page_layout.addWidget(self.save_report_btn)
         return page
 
     def start_engine_run(self, mode: str) -> None:
@@ -532,14 +531,12 @@ class ProducerOSWizard(QMainWindow):
             summary_parts.append(f"Moved {report.get('files_moved', 0)}")
             summary_parts.append(f"Copied {report.get('files_copied', 0)}")
             summary_parts.append(f"Unsorted {report.get('unsorted', 0)}")
-        self.summary_label.setText(
-            "<b>Summary:</b> " + "; ".join(summary_parts)
-        )
+        self.summary_label.setText("<b>Summary:</b> " + "; ".join(summary_parts))
         # Show log: list packs and counts
         log_lines = []
         for pack in report.get("packs", []):
             files = pack.get("files", [])
-            counts = {}
+            counts: Dict[str, int] = {}
             for f in files:
                 bucket = f.get("bucket")
                 counts[bucket] = counts.get(bucket, 0) + 1
@@ -553,10 +550,7 @@ class ProducerOSWizard(QMainWindow):
     def save_run_report(self) -> None:
         # Ask where to save
         dest, _ = QFileDialog.getSaveFileName(
-            self,
-            "Save run report",
-            str(Path.home() / "run_report.json"),
-            "JSON files (*.json)"
+            self, "Save run report", str(Path.home() / "run_report.json"), "JSON files (*.json)"
         )
         if not dest:
             return
@@ -569,10 +563,7 @@ class ProducerOSWizard(QMainWindow):
             else:
                 # Otherwise (Analyze mode), save the in-memory report
                 report_obj = getattr(self, "current_report", {})
-                Path(dest).write_text(
-                    __import__("json").dumps(report_obj, indent=2),
-                    encoding="utf-8"
-                )
+                Path(dest).write_text(__import__("json").dumps(report_obj, indent=2), encoding="utf-8")
 
             QMessageBox.information(self, "Save report", "Report saved successfully.")
         except Exception as exc:
@@ -612,9 +603,10 @@ class ProducerOSWizard(QMainWindow):
     # ------------------------------------------------------------------
     # Theme handling
     def apply_theme(self, theme: str) -> None:
-        app = QApplication.instance()
-        if not app:
+        app_instance = QApplication.instance()
+        if app_instance is None:
             return
+        app = cast(QApplication, app_instance)
         if theme == "system":
             # Reset palette to system
             app.setStyle("Fusion")
@@ -623,35 +615,36 @@ class ProducerOSWizard(QMainWindow):
         # Use Fusion style for custom palettes
         app.setStyle("Fusion")
         palette = QPalette()
+        R = QPalette.ColorRole
         if theme == "dark":
             # Based on Fusion dark palette
-            palette.setColor(QPalette.Window, QColor(53, 53, 53))
-            palette.setColor(QPalette.WindowText, Qt.white)
-            palette.setColor(QPalette.Base, QColor(25, 25, 25))
-            palette.setColor(QPalette.AlternateBase, QColor(53, 53, 53))
-            palette.setColor(QPalette.ToolTipBase, Qt.white)
-            palette.setColor(QPalette.ToolTipText, Qt.white)
-            palette.setColor(QPalette.Text, Qt.white)
-            palette.setColor(QPalette.Button, QColor(53, 53, 53))
-            palette.setColor(QPalette.ButtonText, Qt.white)
-            palette.setColor(QPalette.BrightText, Qt.red)
-            palette.setColor(QPalette.Link, QColor(42, 130, 218))
-            palette.setColor(QPalette.Highlight, QColor(42, 130, 218))
-            palette.setColor(QPalette.HighlightedText, Qt.black)
+            palette.setColor(R.Window, QColor(53, 53, 53))
+            palette.setColor(R.WindowText, QColor("white"))
+            palette.setColor(R.Base, QColor(25, 25, 25))
+            palette.setColor(R.AlternateBase, QColor(53, 53, 53))
+            palette.setColor(R.ToolTipBase, QColor("white"))
+            palette.setColor(R.ToolTipText, QColor("white"))
+            palette.setColor(R.Text, QColor("white"))
+            palette.setColor(R.Button, QColor(53, 53, 53))
+            palette.setColor(R.ButtonText, QColor("white"))
+            palette.setColor(R.BrightText, QColor("red"))
+            palette.setColor(R.Link, QColor(42, 130, 218))
+            palette.setColor(R.Highlight, QColor(42, 130, 218))
+            palette.setColor(R.HighlightedText, QColor("black"))
         else:  # light
-            palette.setColor(QPalette.Window, Qt.white)
-            palette.setColor(QPalette.WindowText, Qt.black)
-            palette.setColor(QPalette.Base, Qt.white)
-            palette.setColor(QPalette.AlternateBase, QColor(240, 240, 240))
-            palette.setColor(QPalette.ToolTipBase, Qt.black)
-            palette.setColor(QPalette.ToolTipText, Qt.white)
-            palette.setColor(QPalette.Text, Qt.black)
-            palette.setColor(QPalette.Button, QColor(240, 240, 240))
-            palette.setColor(QPalette.ButtonText, Qt.black)
-            palette.setColor(QPalette.BrightText, Qt.red)
-            palette.setColor(QPalette.Link, QColor(0, 122, 204))
-            palette.setColor(QPalette.Highlight, QColor(0, 122, 204))
-            palette.setColor(QPalette.HighlightedText, Qt.white)
+            palette.setColor(R.Window, QColor("white"))
+            palette.setColor(R.WindowText, QColor("black"))
+            palette.setColor(R.Base, QColor("white"))
+            palette.setColor(R.AlternateBase, QColor(240, 240, 240))
+            palette.setColor(R.ToolTipBase, QColor("black"))
+            palette.setColor(R.ToolTipText, QColor("white"))
+            palette.setColor(R.Text, QColor("black"))
+            palette.setColor(R.Button, QColor(240, 240, 240))
+            palette.setColor(R.ButtonText, QColor("black"))
+            palette.setColor(R.BrightText, QColor("red"))
+            palette.setColor(R.Link, QColor(0, 122, 204))
+            palette.setColor(R.Highlight, QColor(0, 122, 204))
+            palette.setColor(R.HighlightedText, QColor("white"))
         app.setPalette(palette)
 
 
@@ -668,3 +661,7 @@ def main() -> int:
     except KeyboardInterrupt:
         # If the user stops the process from the terminal, exit cleanly.
         return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

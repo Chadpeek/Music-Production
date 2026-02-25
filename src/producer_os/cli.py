@@ -29,6 +29,7 @@ def _load_style_data(config_service: ConfigService, portable: bool) -> dict:
         example_path = Path(__file__).resolve().parent.parent / "bucket_styles.json"
         if example_path.exists():
             import json
+
             style_data = json.loads(example_path.read_text(encoding="utf-8"))
     return style_data or {}
 
@@ -53,6 +54,7 @@ def _parse_arguments() -> argparse.Namespace:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
+
     # Common arguments for commands that require inbox and hub
     def add_common(subparser: argparse.ArgumentParser) -> None:
         subparser.add_argument("inbox", help="Path to the inbox directory")
@@ -78,6 +80,7 @@ def _parse_arguments() -> argparse.Namespace:
             action="store_true",
             help="Enable verbose logging (developer option)",
         )
+
     # analyze
     sp = subparsers.add_parser("analyze", help="Scan and classify packs, produce a report only")
     add_common(sp)
@@ -91,17 +94,13 @@ def _parse_arguments() -> argparse.Namespace:
     sp = subparsers.add_parser("move", help="Move files into the hub and record an audit trail")
     add_common(sp)
     # repair-styles
-    sp = subparsers.add_parser(
-        "repair-styles", help="Regenerate missing or misplaced `.nfo` files"
-    )
+    sp = subparsers.add_parser("repair-styles", help="Regenerate missing or misplaced `.nfo` files")
     sp.add_argument("hub", help="Path to the hub directory")
     sp.add_argument(
         "--portable", "-p", action="store_true", help="Force portable mode (ignored if portable.flag is present)"
     )
     # preview-styles (placeholder)
-    sp = subparsers.add_parser(
-        "preview-styles", help="Reserved for future visual preview of styles"
-    )
+    sp = subparsers.add_parser("preview-styles", help="Reserved for future visual preview of styles")
     sp.add_argument("hub", help="Path to the hub directory")
     sp.add_argument(
         "--portable", "-p", action="store_true", help="Force portable mode (ignored if portable.flag is present)"
@@ -116,9 +115,7 @@ def _parse_arguments() -> argparse.Namespace:
         "--portable", "-p", action="store_true", help="Force portable mode (ignored if portable.flag is present)"
     )
     # undo-last-run
-    sp = subparsers.add_parser(
-        "undo-last-run", help="Undo the last move operation using the audit trail"
-    )
+    sp = subparsers.add_parser("undo-last-run", help="Undo the last move operation using the audit trail")
     sp.add_argument("hub", help="Path to the hub directory")
     sp.add_argument(
         "--portable", "-p", action="store_true", help="Force portable mode (ignored if portable.flag is present)"
@@ -126,7 +123,15 @@ def _parse_arguments() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _construct_engine(inbox_path: Path, hub_path: Path, config_service: ConfigService, portable: bool, verbose: bool, overwrite_nfo: bool = False, normalize_pack_name: bool = False) -> ProducerOSEngine:
+def _construct_engine(
+    inbox_path: Path,
+    hub_path: Path,
+    config_service: ConfigService,
+    portable: bool,
+    verbose: bool,
+    overwrite_nfo: bool = False,
+    normalize_pack_name: bool = False,
+) -> ProducerOSEngine:
     # Load config, styles and bucket mapping
     config = config_service.load_config(cli_portable=portable)
     style_data = _load_style_data(config_service, portable)
@@ -194,7 +199,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("Error: inbox and hub directories are required")
         return 1
     config_service = ConfigService(app_dir=hub_path)
-    engine = _construct_engine(inbox_path, hub_path, config_service, cli_portable, args.verbose, args.overwrite_nfo, args.normalize_pack_name)
+    engine = _construct_engine(
+        inbox_path, hub_path, config_service, cli_portable, args.verbose, args.overwrite_nfo, args.normalize_pack_name
+    )
     if command == "analyze":
         mode = "analyze"
     elif command == "dry-run":

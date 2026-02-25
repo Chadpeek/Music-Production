@@ -32,10 +32,29 @@ import shutil
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple, TypedDict, TypeAlias
 
-from .styles_service import StyleService
 from .bucket_service import BucketService
+from .styles_service import StyleService
+
+
+class PackFileEntry(TypedDict):
+    source: str
+    dest: str
+    bucket: str
+    category: str
+    confidence: float
+    action: str
+    reason: str
+
+
+class PackReport(TypedDict, total=False):
+    pack: str
+    files: list[PackFileEntry]
+    counts: dict[str, int]
+    warnings: list[str]
+    errors: list[str]
+
 
 # ---------------------------------------------------------------------------
 # Tuning constants (can be overridden by tuning.json via _load_tuning_overrides)
@@ -86,7 +105,7 @@ def _clamp(val: float, min_val: float, max_val: float) -> float:
 
 # A classification is represented as a tuple:
 # (bucket_name or None, category_name, confidence, list of (bucket, score) candidates)
-ClassificationResult = Tuple[Optional[str], str, float, List[Tuple[str, int]]]
+ClassificationResult: TypeAlias = Tuple[Optional[str], str, float, List[Tuple[str, int]]]
 
 
 DEFAULT_UNSORTED_STYLE: Dict[str, Any] = {
@@ -360,7 +379,7 @@ class ProducerOSEngine:
             hop = min(512, max(1, win // 4))
 
             S = np.abs(librosa.stft(y_norm, n_fft=win, hop_length=hop, window="hann"))
-            P = S ** 2
+            P = S**2
             freqs = librosa.fft_frequencies(sr=sr, n_fft=win)
 
             total_power = float(np.sum(P))
@@ -382,7 +401,9 @@ class ProducerOSEngine:
             features["centroid_mean"] = float(np.mean(centroid)) if centroid.size > 0 else 0.0
             early_centroid_frames = int((0.10 * sr) / hop + 0.999)
             features["centroid_early"] = (
-                float(np.mean(centroid[: max(1, early_centroid_frames)])) if centroid.size > 0 else features["centroid_mean"]
+                float(np.mean(centroid[: max(1, early_centroid_frames)]))
+                if centroid.size > 0
+                else features["centroid_mean"]
             )
 
             zcr = librosa.feature.zero_crossing_rate(y_norm, frame_length=win, hop_length=hop)[0]
@@ -395,7 +416,7 @@ class ProducerOSEngine:
             try:
                 # librosa.yin needs enough samples for low fmin (avoid inaccurate pitch detection warning)
                 win = max(int(win), 2207)
-                
+
                 f0 = librosa.yin(y_norm, fmin=20, fmax=2000, sr=sr, frame_length=win, hop_length=hop)
                 valid = ~np.isnan(f0)
                 voiced_ratio = float(np.sum(valid)) / float(len(f0)) if len(f0) > 0 else 0.0
@@ -522,7 +543,9 @@ class ProducerOSEngine:
         glide_detected = bool(features.get("glide_detected", False))
         glide_confidence = float(features.get("glide_confidence", 0.0) or 0.0)
 
-        is_kick_like = duration < FEATURE_THRESHOLDS["kick_duration_max"] and transient > FEATURE_THRESHOLDS["transient_kick_min"]
+        is_kick_like = (
+            duration < FEATURE_THRESHOLDS["kick_duration_max"] and transient > FEATURE_THRESHOLDS["transient_kick_min"]
+        )
 
         # 808
         if not is_kick_like:
@@ -623,7 +646,9 @@ class ProducerOSEngine:
 
         return (None, "UNSORTED", confidence, candidates)
 
-    def _classify_file(self, file_path: Path) -> Tuple[Optional[str], str, float, List[Tuple[str, float]], bool, Dict[str, Any]]:
+    def _classify_file(
+        self, file_path: Path
+    ) -> Tuple[Optional[str], str, float, List[Tuple[str, float]], bool, Dict[str, Any]]:
         """Return (bucket, category, confidence_ratio, top3_candidates, low_confidence, reason_dict)."""
         reason: Dict[str, Any] = {
             "folder_matches": [],
@@ -649,13 +674,28 @@ class ProducerOSEngine:
 
         final_scores: Dict[str, float] = {}
         for bucket in self.BUCKET_RULES.keys():
-            final_scores[bucket] = float(folder_scores.get(bucket, 0)) + float(filename_scores.get(bucket, 0)) + float(audio_scores.get(bucket, 0))
+            final_scores[bucket] = (
+                float(folder_scores.get(bucket, 0))
+                + float(filename_scores.get(bucket, 0))
+                + float(audio_scores.get(bucket, 0))
+            )
 
         positive = {b: s for b, s in final_scores.items() if s > 0}
         if not positive:
             reason["folder_matches"] = [(b, s) for b, s in folder_scores.items() if s > 0]
             reason["filename_matches"] = [(b, s) for b, s in filename_scores.items() if s > 0]
-            reason["audio_summary"] = {k: features.get(k) for k in ("duration", "low_freq_ratio", "transient_strength", "centroid_mean", "centroid_early", "zcr_mean", "flatness_mean")}
+            reason["audio_summary"] = {
+                k: features.get(k)
+                for k in (
+                    "duration",
+                    "low_freq_ratio",
+                    "transient_strength",
+                    "centroid_mean",
+                    "centroid_early",
+                    "zcr_mean",
+                    "flatness_mean",
+                )
+            }
             return (None, "UNSORTED", 0.0, [], False, reason)
 
         sorted_scores = sorted(positive.items(), key=lambda kv: kv[1], reverse=True)
@@ -760,8 +800,8 @@ class ProducerOSEngine:
         mode = (mode or "analyze").lower().strip()
         self.current_mode = mode
 
-        write_hub = mode in {"copy", "move", "repair-styles"}              # .nfo + cache allowed
-        write_logs = mode in {"dry-run", "copy", "move", "repair-styles"} # analyze must not log
+        write_hub = mode in {"copy", "move", "repair-styles"}  # .nfo + cache allowed
+        write_logs = mode in {"dry-run", "copy", "move", "repair-styles"}  # analyze must not log
         do_transfer = mode in {"copy", "move"}
 
         run_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_") + uuid.uuid4().hex[:8]
@@ -782,7 +822,10 @@ class ProducerOSEngine:
         if mode == "analyze":
             packs = self._discover_packs()
             for pack_dir in packs:
-                pack_report = {"pack": pack_dir.name, "files": []}
+                pack_report: PackReport = {
+                    "pack": pack_dir.name,
+                    "files": [],
+                }
 
                 for root, dirs, files in os.walk(pack_dir):
                     dirs[:] = [d for d in dirs if not self._should_ignore(d)]
@@ -795,7 +838,9 @@ class ProducerOSEngine:
                         if file_path.suffix.lower() != ".wav":
                             continue
 
-                        bucket, category, confidence, candidates, low_confidence, _reason_dict = self._classify_file(file_path)
+                        bucket, category, confidence, candidates, low_confidence, _reason_dict = self._classify_file(
+                            file_path
+                        )
                         rel_path = file_path.relative_to(pack_dir)
 
                         if bucket is None:
@@ -813,15 +858,17 @@ class ProducerOSEngine:
                             if candidates:
                                 reason += "; candidates: " + ", ".join([f"{b}:{int(s)}" for b, s in candidates])
 
-                        pack_report["files"].append({
-                            "source": str(file_path),
-                            "dest": str(dest_path),
-                            "bucket": bucket or "UNSORTED",
-                            "category": category,
-                            "confidence": confidence,
-                            "action": "NONE",
-                            "reason": reason,
-                        })
+                        pack_report["files"].append(
+                            {
+                                "source": str(file_path),
+                                "dest": str(dest_path),
+                                "bucket": bucket or "UNSORTED",
+                                "category": category,
+                                "confidence": confidence,
+                                "action": "NONE",
+                                "reason": reason,
+                            }
+                        )
                         report["files_processed"] += 1
 
                 report["packs"].append(pack_report)
@@ -871,7 +918,7 @@ class ProducerOSEngine:
         _log(f"Producer OS run_id={run_id} mode={mode}")
         _log(f"Hub: {self.hub_dir}")
         _log(f"Packs discovered: {len(packs)}")
-       
+
         try:
             if mode == "move" and audit_path:
                 audit_file = open(audit_path, "w", newline="", encoding="utf-8")
@@ -879,8 +926,11 @@ class ProducerOSEngine:
                 audit_writer.writerow(["file", "pack", "category", "bucket", "confidence", "action", "reason"])
 
             for pack_dir in packs:
-                pack_report = {"pack": pack_dir.name, "files": []}
-                
+                transfer_pack_report: PackReport = {
+                    "pack": pack_dir.name,
+                    "files": [],
+                }
+
                 _log(f"Processing pack: {pack_dir.name}")
 
                 for root, dirs, files in os.walk(pack_dir):
@@ -895,10 +945,16 @@ class ProducerOSEngine:
                             continue
 
                         rel_path = file_path.relative_to(pack_dir)
-                        bucket, category, confidence, candidates, low_confidence, _reason_dict = self._classify_file(file_path)
+                        bucket, category, confidence, candidates, low_confidence, _reason_dict = self._classify_file(
+                            file_path
+                        )
 
                         if bucket is None:
-                            dest_dir = self._ensure_unsorted_structure(pack_dir.name) if write_hub else (self.hub_dir / "UNSORTED" / pack_dir.name)
+                            dest_dir = (
+                                self._ensure_unsorted_structure(pack_dir.name)
+                                if write_hub
+                                else (self.hub_dir / "UNSORTED" / pack_dir.name)
+                            )
                             dest_path = dest_dir / rel_path
                             report["unsorted"] += 1
                             reason = "no matches"
@@ -937,31 +993,35 @@ class ProducerOSEngine:
                                 report["failed"] += 1
                                 reason += f"; move/copy failed: {e}"
 
-                        pack_report["files"].append({
-                            "source": str(file_path),
-                            "dest": str(dest_path),
-                            "bucket": bucket or "UNSORTED",
-                            "category": category,
-                            "confidence": confidence,
-                            "action": action,
-                            "reason": reason,
-                        })
+                        transfer_pack_report["files"].append(
+                            {
+                                "source": str(file_path),
+                                "dest": str(dest_path),
+                                "bucket": bucket or "UNSORTED",
+                                "category": category,
+                                "confidence": confidence,
+                                "action": action,
+                                "reason": reason,
+                            }
+                        )
                         report["files_processed"] += 1
 
                         if audit_writer:
-                            audit_writer.writerow([
-                                str(file_path),
-                                pack_dir.name,
-                                category,
-                                bucket or "UNSORTED",
-                                f"{confidence:.2f}",
-                                action,
-                                reason,
-                            ])
+                            audit_writer.writerow(
+                                [
+                                    str(file_path),
+                                    pack_dir.name,
+                                    category,
+                                    bucket or "UNSORTED",
+                                    f"{confidence:.2f}",
+                                    action,
+                                    reason,
+                                ]
+                            )
 
-                _log(f"Finished pack: {pack_dir.name} files={len(pack_report['files'])}")
+                _log(f"Finished pack: {pack_dir.name} files={len(transfer_pack_report['files'])}")
 
-                report["packs"].append(pack_report)
+                report["packs"].append(transfer_pack_report)
 
             _log(
                 f"Done. processed={report['files_processed']} "
@@ -969,7 +1029,7 @@ class ProducerOSEngine:
                 f"failed={report['failed']} unsorted={report['unsorted']} "
                 f"skipped={report['skipped_existing']}"
             )
-            
+
         finally:
             if audit_file:
                 audit_file.close()
@@ -980,7 +1040,7 @@ class ProducerOSEngine:
 
         if write_hub:
             self._save_feature_cache()
-        
+
         return report
 
     def undo_last_run(self) -> Dict[str, Any]:
@@ -1101,7 +1161,9 @@ class ProducerOSEngine:
                     category = grandparent.name
                     display_bucket = parent_dir.name
                     bucket_id = self.bucket_service.get_bucket_id(display_bucket) or display_bucket
-                    style = self.style_service.pack_style_from_bucket(self.style_service.resolve_style(bucket_id, category))
+                    style = self.style_service.pack_style_from_bucket(
+                        self.style_service.resolve_style(bucket_id, category)
+                    )
 
             new_contents = self.style_service._nfo_contents(style)
 

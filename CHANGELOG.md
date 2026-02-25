@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v1.0.1 (2026-02-25)
+
+### Bug Fixes
+
+- Clean up producer_os module entrypoint
+  ([`65c7387`](https://github.com/KidChadd/Producer-OS/commit/65c73875f8741c46d52e0cf7905958be7a2162df))
+
+
 ## v1.0.0 (2026-02-25)
 
 ### Chores

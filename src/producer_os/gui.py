@@ -660,7 +660,7 @@ def main() -> int:
 
     app = QApplication(sys.argv)
 
-    win = ProducerOSWizard()  # <-- replace with actual class
+    win = ProducerOSWizard()
     win.show()
 
     return app.exec()

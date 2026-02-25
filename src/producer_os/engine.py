@@ -393,6 +393,9 @@ class ProducerOSEngine:
 
             # Pitch (yin)
             try:
+                # librosa.yin needs enough samples for low fmin (avoid inaccurate pitch detection warning)
+                win = max(int(win), 2207)
+                
                 f0 = librosa.yin(y_norm, fmin=20, fmax=2000, sr=sr, frame_length=win, hop_length=hop)
                 valid = ~np.isnan(f0)
                 voiced_ratio = float(np.sum(valid)) / float(len(f0)) if len(f0) > 0 else 0.0

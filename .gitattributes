@@ -1,0 +1,13 @@
+* text=auto
+
+# Source + configs: keep LF (best for cross-platform + CI)
+*.py   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.md   text eol=lf
+*.txt  text eol=lf
+*.json text eol=lf
+
+# Inno Setup: keep CRLF (Windows-native, avoids weird editor/display issues)
+*.iss  text eol=crlf

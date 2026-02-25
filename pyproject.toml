@@ -22,11 +22,14 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest",
-    "ruff",
-    "mypy",
-    "nuitka>=2.5",
-    "zstandard>=0.23",
+  "pytest",
+  "ruff",
+  "mypy",
+  "nuitka>=2.5",
+  "zstandard>=0.23",
+]
+gui = [
+  "PySide6>=6.6",
 ]
 
 [tool.ruff]
@@ -35,3 +38,7 @@ line-length = 120
 [tool.mypy]
 python_version = "3.11"
 ignore_missing_imports = true
+
+[project.scripts]
+producer-os = "producer_os.cli:main"
+producer-os-gui = "producer_os.gui:main"

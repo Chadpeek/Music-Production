@@ -1,14 +1,8 @@
-
-
----
-
-# 🎛 New Clean README Format
-
 ```markdown
 <p align="center">
-  <h1 align="center">🎛 Producer OS</h1>
+  <h1 align="center">Producer OS</h1>
   <p align="center">
-    Structured sample management for serious producers.
+    Structured sample management.
   </p>
 </p>
 
@@ -20,131 +14,43 @@
 
 ---
 
-## 🧠 What Is Producer OS?
+## Overview
 
-Producer OS is a **sample pack organization system** built specifically for music producers.
+Producer OS is a structured system for organizing sample packs and production assets.
 
-It transforms chaotic sample folders into a clean, structured production hub — without destroying your original pack identity.
+It transforms unstructured folders into a clean, repeatable hub layout — without destructive behavior.
 
-It is:
+Designed for long-term use.
+
+---
+
+## Core Principles
 
 - Safe by default  
-- Transparent in logic  
-- Designed for reruns  
-- Built for long-term use  
+- Transparent in operation  
+- Re-runnable without duplication  
+- Strict separation of responsibilities  
+- Logging-first architecture  
 
 ---
 
-## 🚨 The Problem
+## What It Does
 
-If you’ve been producing for years, you probably have:
-
-- Hundreds of drum kits  
-- Duplicate 808 folders  
-- Random “New Folder (2)” spam  
-- Packs mixed with loose WAV files  
-- Vendor structures that don’t match  
-
-Eventually your creativity slows down because your file system is chaos.
-
-Producer OS fixes that.
+- Wraps loose files into pack folders  
+- Routes content into defined buckets  
+- Preserves vendor structure (optional)  
+- Logs every action  
+- Quarantines uncertain input  
+- Avoids reprocessing organized packs  
 
 ---
 
-## ⚙️ What It Actually Does
-
-### 📦 Wraps Loose Files
-Automatically groups stray samples into structured pack folders.
-
-### 🗂 Routes Into Buckets
-Sorts into:
-
-- Drum Kits
-- Samples
-- FL Projects
-- MIDI Packs
-- Presets
-- UNSORTED
-- Quarantine
-
-### 🔍 Explains Every Move
-Each run generates a log showing:
-
-- What moved
-- Where it moved
-- Why it matched
-- Why something failed confidence
-
-Nothing happens silently.
-
----
-
-## 🔐 Built to Be Safe
-
-Producer OS will not:
-
-- Delete files by default
-- Reprocess already organized packs
-- Guess on low-confidence matches
-- Break vendor structure without permission
-
-Low confidence → `UNSORTED`  
-Suspicious input → `Quarantine`
-
----
-
-## 🖥 GUI Workflow
-
-Simple wizard:
-
-1. Choose Inbox
-2. Choose Hub
-3. Select options
-4. Run
-
-Includes:
-
-- Move / Copy toggle
-- Theme selection (System / Dark / Light)
-- Developer mode
-- Persistent config
-
----
-
-## 🧩 Architecture (Clean Separation)
-
-```
-
-UI Layer        → User interaction
-Engine          → Sorting logic
-Services        → Config / Styles / Buckets
-CLI             → Headless runs
-Tests           → Verification
-
-```
-
-No mega scripts.  
-No hidden behavior.
-
----
-
-## 🔁 Designed for Re-Runs
-
-Run it once → distributes  
-Run it again → skips safely  
-
-No duplication.  
-No folder spam.  
-
----
-
-## 📂 Example Output
+## Output Structure
 
 ```
 
 Hub/
 ├── Drum Kits/
-│    └── PackName/
 ├── Samples/
 ├── FL Projects/
 ├── MIDI Packs/
@@ -152,20 +58,38 @@ Hub/
 ├── UNSORTED/
 └── Quarantine/
 
-````
+```
 
-Clean. Predictable. Reproducible.
+Clean. Predictable. Repeatable.
 
 ---
 
-## 🚀 Run In Dev Mode
+## Architecture
+
+```
+
+UI Layer        → User interaction
+Engine          → Sorting logic
+Services        → Config / Styles / Buckets
+CLI             → Headless execution
+Tests           → Validation
+
+````
+
+No combined responsibilities.
+
+---
+
+## Execution
+
+Development:
 
 ```bash
 pip install -r requirements.txt
 python -m producer_os.producer_os_app
 ````
 
-Build EXE (Nuitka):
+Build (Nuitka):
 
 ```bash
 python -m nuitka --standalone --enable-plugin=pyside6 build_gui_entry.py
@@ -173,39 +97,63 @@ python -m nuitka --standalone --enable-plugin=pyside6 build_gui_entry.py
 
 ---
 
-## 🧭 Philosophy
+## Safety Model
 
-Producer OS follows:
-
-* Safety > Speed
-* Logging > Guessing
-* Structure > Chaos
-* Iteration > Rush
-* Clarity > Cleverness
+* No deletion by default
+* Low-confidence → `UNSORTED`
+* Suspicious input → `Quarantine`
+* All actions logged
 
 ---
 
-## 🛣 Roadmap
+## Re-Run Behavior
 
-* Waveform analysis sorting
-* BPM / Key scoring
-* Rule editor inside GUI
+First run:
+
+* Distributes content
+
+Second run:
+
+* Skips previously processed packs
+* Prevents duplication
+
+Designed for repeated execution.
+
+---
+
+## Roadmap
+
+* Waveform-based classification
+* BPM / key detection
+* Rule editor in UI
 * Advanced duplicate detection
-* CI validation pipeline
 
 ---
 
-## 🎯 Who It’s For
+Producer OS is not a script.
 
-* Producers with massive sample libraries
-* FL Studio users
-* Creators who like clean systems
-* Developers who value transparent tools
+It is a structured production environment.
+
+```
 
 ---
 
-Producer OS isn’t just a sorter.
+# 🎯 Why This Works Better
 
-It’s a structured production environment.
+- Short sentences
+- No fluff
+- Clear hierarchy
+- Minimal emotion
+- Controlled tone
+- White space
+- Quiet confidence
 
+It now feels like:
+- A productivity tool
+- A system
+- Intentional software
+- Not a hobby project
+
+---
+Say **“Ultra minimal”** if you want to push it even cleaner.
 ```

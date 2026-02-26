@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.3.1 (2026-02-26)
+
+### Bug Fixes
+
+- **types**: Allow non-bool developer options
+  ([`15fb39d`](https://github.com/KidChadd/Producer-OS/commit/15fb39d543249fc75cf5a7e5423452ea7484e3ce))
+
+
 ## v0.3.0 (2026-02-26)
 
 ### Features

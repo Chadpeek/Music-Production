@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.1.3 (2026-02-26)
+
+### Bug Fixes
+
+- **ci**: Make auto version idempotent and rerunnable
+  ([`31a3eb4`](https://github.com/KidChadd/Producer-OS/commit/31a3eb4c4b5167ba02f697033c5c48378c8546c0))
+
+
 ## v0.1.2 (2026-02-26)
 
 ### Bug Fixes

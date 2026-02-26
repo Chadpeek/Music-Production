@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.6.0 (2026-02-26)
+
+### Features
+
+- **ui,ci**: Add run review audio tools and packaged smoke
+  ([`3e905c8`](https://github.com/KidChadd/Producer-OS/commit/3e905c8225976aa27e6ba22e89c3dba4868694e1))
+
+
 ## v0.5.0 (2026-02-26)
 
 ### Features

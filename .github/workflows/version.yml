@@ -59,7 +59,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          semantic-release version
+          semantic-release -vv version
 
       - name: Resolve version tag on HEAD
         id: release_tag
@@ -82,3 +82,4 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh workflow run release.yml --ref main -f tag=${{ steps.release_tag.outputs.tag }}
+

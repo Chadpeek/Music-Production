@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.6.5 (2026-02-26)
+
+### Bug Fixes
+
+- **config**: Align version and example config with current runtime
+  ([`7598ebf`](https://github.com/KidChadd/Producer-OS/commit/7598ebf30d0f92f673e88799d856cd03d4d99d1c))
+
+
 ## v0.6.4 (2026-02-26)
 
 ### Bug Fixes

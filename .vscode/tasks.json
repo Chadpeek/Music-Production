@@ -2,6 +2,20 @@
   "version": "2.0.0",
   "tasks": [
     {
+      "label": "Install: editable + dev + gui",
+      "type": "process",
+      "command": "${config:python.defaultInterpreterPath}",
+      "args": ["-m", "pip", "install", "-e", ".[dev,gui]"],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "PYTHONUTF8": "1",
+          "PYTHONIOENCODING": "utf-8"
+        }
+      },
+      "problemMatcher": []
+    },
+    {
       "label": "Producer-OS: Dry-run (example folders)",
       "type": "process",
       "command": "${config:python.defaultInterpreterPath}",

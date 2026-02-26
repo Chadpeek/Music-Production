@@ -1,9 +1,23 @@
 {
-  "inbox_dir": "C:/Path/To/Your/Inbox",
-  "hub_dir": "C:/Path/To/Your/Hub",
-  "vendor_structure_mode": "preserve-depth",
-  "preserve_depth_n": 2,
-  "audio_analysis_enabled": true,
-  "cache_enabled": true,
-  "log_verbose": false
+  "inbox_path": "C:/Path/To/Your/Inbox",
+  "hub_path": "C:/Path/To/Your/Destination",
+  "output_folder_name": "Hub",
+  "action": "move",
+  "dry_run": true,
+  "preserve_vendor": true,
+  "file_types": {
+    "wav": true,
+    "mp3": false,
+    "flac": false
+  },
+  "loop_safety": true,
+  "theme": "system",
+  "ui_density": "comfortable",
+  "ui_accent_mode": "theme_default",
+  "ui_accent_preset": "cyan",
+  "ui_accent_color": "",
+  "developer_tools": false,
+  "portable_mode": false,
+  "normalize_pack_name": false,
+  "ignore_rules": ["__MACOSX", ".DS_Store", "._"]
 }

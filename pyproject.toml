@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "producer-os"
-version = "0.1.1"
+version = "0.6.4"
 description = "Producer OS – organise music sample packs and apply FL Studio folder styling"
 authors = [
   { name = "KidChadd", email = "kidchadd@users.noreply.github.com" },

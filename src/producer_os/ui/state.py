@@ -37,8 +37,8 @@ class WizardState:
                 if isinstance(value, bool):
                     file_types[key] = value
         return cls(
-            inbox_path=str(config.get("inbox_path", "")),
-            hub_path=str(config.get("hub_path", "")),
+            inbox_path=str(config.get("inbox_path", config.get("inbox", ""))),
+            hub_path=str(config.get("hub_path", config.get("hub", ""))),
             output_folder_name=str(config.get("output_folder_name", "Hub") or "Hub"),
             action=str(config.get("action", "move")),
             dry_run=bool(config.get("dry_run", False)),

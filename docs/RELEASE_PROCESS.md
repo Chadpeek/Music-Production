@@ -17,6 +17,8 @@ Primary workflows:
 
 Defined in `pyproject.toml`:
 
+- `pyproject.toml` (`[project].version`) is the package version source of truth and is updated by `python-semantic-release`
+
 - `feat` -> minor release
 - `fix` -> patch release
 - `perf` -> patch release

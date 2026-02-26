@@ -4,13 +4,52 @@
   "description": "Schema for Producer OS configuration file.",
   "type": "object",
   "properties": {
+    "inbox_path": {
+      "type": "string",
+      "description": "Path to the inbox directory (current GUI/runtime key)"
+    },
+    "hub_path": {
+      "type": "string",
+      "description": "Path to the hub/destination directory (current GUI/runtime key)"
+    },
     "inbox": {
       "type": "string",
-      "description": "Path to the inbox directory"
+      "description": "Path to the inbox directory (legacy key; inbox_path is preferred)"
     },
     "hub": {
       "type": "string",
-      "description": "Path to the hub directory"
+      "description": "Path to the hub directory (legacy key; hub_path is preferred)"
+    },
+    "output_folder_name": {
+      "type": "string",
+      "description": "Name of the organized folder created inside the destination root (for example, Hub or Outbox)"
+    },
+    "action": {
+      "type": "string",
+      "enum": ["move", "copy"],
+      "description": "Default transfer mode"
+    },
+    "dry_run": {
+      "type": "boolean",
+      "description": "Whether the GUI/CLI should default to dry-run behavior"
+    },
+    "preserve_vendor": {
+      "type": "boolean",
+      "description": "Whether to preserve vendor/pack folder structure when organizing"
+    },
+    "file_types": {
+      "type": "object",
+      "description": "Enabled file types for GUI processing",
+      "properties": {
+        "wav": {"type": "boolean"},
+        "mp3": {"type": "boolean"},
+        "flac": {"type": "boolean"}
+      },
+      "additionalProperties": true
+    },
+    "loop_safety": {
+      "type": "boolean",
+      "description": "Whether loop routing safety is enabled"
     },
     "theme": {
       "type": "string",
@@ -48,6 +87,10 @@
     "portable_mode": {
       "type": "boolean",
       "description": "Override to enable portable mode"
+    },
+    "normalize_pack_name": {
+      "type": "boolean",
+      "description": "Whether to normalize pack names when sorting"
     },
     "developer_tools": {
       "type": ["boolean", "object"],

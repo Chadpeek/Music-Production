@@ -111,8 +111,11 @@ class StatChip(QFrame):
 
     def apply_density(self, density: str) -> None:
         compact = str(density).strip().lower() == "compact"
-        self.layout().setContentsMargins(10 if compact else 14, 8 if compact else 12, 10 if compact else 14, 7 if compact else 10)
-        self.layout().setSpacing(2 if compact else 3)
+        layout = self.layout()
+        if layout is None:
+            return
+        layout.setContentsMargins(10 if compact else 14, 8 if compact else 12, 10 if compact else 14, 7 if compact else 10)
+        layout.setSpacing(2 if compact else 3)
 
 
 class StatusBadge(QLabel):

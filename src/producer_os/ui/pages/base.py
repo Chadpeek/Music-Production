@@ -44,7 +44,9 @@ class BaseWizardPage(QWidget):
             density = "comfortable"
         self._ui_density = density
         compact = density == "compact"
-        self.layout().setSpacing(10 if compact else 14)
+        root_layout = self.layout()
+        if root_layout is not None:
+            root_layout.setSpacing(10 if compact else 14)
         self.content_layout.setContentsMargins(0, 2, 4 if compact else 6, 2)
         self.content_layout.setSpacing(10 if compact else 14)
         if hasattr(self.header, "apply_density"):

@@ -131,7 +131,7 @@ def stop_pulse(widget: QWidget) -> None:
         if _supports_opacity_effects():
             effect.setOpacity(1.0)
         else:
-            widget.setGraphicsEffect(None)
+            widget.setGraphicsEffect(None)  # type: ignore[arg-type]
 
 
 def animate_reveal(widget: QWidget, expanded: bool, duration_ms: int = 220) -> None:

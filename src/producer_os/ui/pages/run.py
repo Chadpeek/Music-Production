@@ -5,7 +5,7 @@ import json
 import re
 import wave
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 from PySide6.QtCore import QSettings, QSignalBlocker, Qt, QUrl, Signal
 from PySide6.QtGui import QColor, QDesktopServices, QPainter, QPen
@@ -36,8 +36,8 @@ from producer_os.ui.widgets import NoWheelComboBox, StatChip, StatusBadge, repol
 try:
     from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 except Exception:  # pragma: no cover - optional runtime dependency path
-    QAudioOutput = None  # type: ignore[assignment]
-    QMediaPlayer = None  # type: ignore[assignment]
+    QAudioOutput = None  # type: ignore[assignment,misc]
+    QMediaPlayer = None  # type: ignore[assignment,misc]
 
 try:
     import soundfile as _sf  # type: ignore[import-not-found]
@@ -339,13 +339,13 @@ class RunPage(BaseWizardPage):
         self.timeline_row.setContentsMargins(0, 0, 0, 0)
         self.timeline_row.setSpacing(8)
         for phase_key, phase_label in _PHASE_LABELS:
-            chip = QLabel(phase_label)
-            chip.setObjectName("TimelineStep")
-            chip.setProperty("state", "pending")
-            chip.setProperty("phaseKey", phase_key)
-            chip.setToolTip(phase_label)
-            self.timeline_row.addWidget(chip)
-            self._timeline_labels.append(chip)
+            phase_chip = QLabel(phase_label)
+            phase_chip.setObjectName("TimelineStep")
+            phase_chip.setProperty("state", "pending")
+            phase_chip.setProperty("phaseKey", phase_key)
+            phase_chip.setToolTip(phase_label)
+            self.timeline_row.addWidget(phase_chip)
+            self._timeline_labels.append(phase_chip)
             self._timeline_phase_keys.append(phase_key)
         self.timeline_row.addStretch(1)
         layout.addLayout(self.timeline_row)
@@ -357,8 +357,8 @@ class RunPage(BaseWizardPage):
         self.moved_chip = StatChip("Moved", "0")
         self.copied_chip = StatChip("Copied", "0")
         self.unsorted_chip = StatChip("Unsorted", "0")
-        for chip in (self.processed_chip, self.moved_chip, self.copied_chip, self.unsorted_chip):
-            stats.addWidget(chip)
+        for stat_chip in (self.processed_chip, self.moved_chip, self.copied_chip, self.unsorted_chip):
+            stats.addWidget(stat_chip)
         layout.addLayout(stats)
 
         self.summary_label = QLabel("No results yet.")
@@ -2074,7 +2074,7 @@ class RunPage(BaseWizardPage):
             p.setValue("run_page/preview_low_only", bool(self.preview_low_only.isChecked()))
             p.setValue("run_page/preview_changed_only", bool(self.preview_changed_only.isChecked()))
             p.setValue("run_page/preview_sort_col", int(self._preview_sort_column))
-            p.setValue("run_page/preview_sort_order", int(self._preview_sort_order))
+            p.setValue("run_page/preview_sort_order", cast(int, self._preview_sort_order.value))
             p.setValue("run_page/audio_autoplay", bool(self.review_audio_autoplay.isChecked()))
         except Exception:
             pass
@@ -2083,7 +2083,10 @@ class RunPage(BaseWizardPage):
         self._restoring_layout_prefs = True
         try:
             p = self._prefs
-            tab_idx = int(p.value("run_page/tab_index", 0) or 0)
+            try:
+                tab_idx = int(str(p.value("run_page/tab_index", 0) or 0))
+            except (TypeError, ValueError):
+                tab_idx = 0
             if 0 <= tab_idx < self.tabs.count():
                 self.tabs.setCurrentIndex(tab_idx)
 
@@ -2115,8 +2118,19 @@ class RunPage(BaseWizardPage):
                 "preview_low_only": bool(p.value("run_page/preview_low_only", False)),
                 "preview_changed_only": bool(p.value("run_page/preview_changed_only", False)),
             }
-            self._preview_sort_column = int(p.value("run_page/preview_sort_col", 0) or 0)
-            self._preview_sort_order = Qt.SortOrder(int(p.value("run_page/preview_sort_order", int(Qt.SortOrder.AscendingOrder)) or 0))
+            try:
+                self._preview_sort_column = int(str(p.value("run_page/preview_sort_col", 0) or 0))
+            except (TypeError, ValueError):
+                self._preview_sort_column = 0
+            sort_order_default = cast(int, Qt.SortOrder.AscendingOrder.value)
+            try:
+                sort_order_value = int(str(p.value("run_page/preview_sort_order", sort_order_default) or sort_order_default))
+            except (TypeError, ValueError):
+                sort_order_value = sort_order_default
+            try:
+                self._preview_sort_order = Qt.SortOrder(sort_order_value)
+            except Exception:
+                self._preview_sort_order = Qt.SortOrder.AscendingOrder
             self.review_audio_autoplay.setChecked(bool(p.value("run_page/audio_autoplay", True)))
 
             # Apply controls that do not depend on dynamic combo choices immediately.

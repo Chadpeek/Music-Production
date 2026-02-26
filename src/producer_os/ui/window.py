@@ -355,8 +355,15 @@ class ProducerOSWindow(QMainWindow):
         try:
             root = self.centralWidget()
             if isinstance(root, QWidget):
-                root.layout().setContentsMargins(12 if compact else 16, 12 if compact else 16, 12 if compact else 16, 12 if compact else 16)
-                root.layout().setSpacing(10 if compact else 12)
+                root_layout = root.layout()
+                if root_layout is not None:
+                    root_layout.setContentsMargins(
+                        12 if compact else 16,
+                        12 if compact else 16,
+                        12 if compact else 16,
+                        12 if compact else 16,
+                    )
+                    root_layout.setSpacing(10 if compact else 12)
         except Exception:
             pass
         try:
@@ -364,7 +371,14 @@ class ProducerOSWindow(QMainWindow):
         except Exception:
             pass
         try:
-            self.content_surface.layout().setContentsMargins(10 if compact else 14, 10 if compact else 14, 10 if compact else 14, 10 if compact else 14)
+            content_layout = self.content_surface.layout()
+            if content_layout is not None:
+                content_layout.setContentsMargins(
+                    10 if compact else 14,
+                    10 if compact else 14,
+                    10 if compact else 14,
+                    10 if compact else 14,
+                )
         except Exception:
             pass
         for page in getattr(self, "pages", []):

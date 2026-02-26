@@ -20,6 +20,18 @@ $repoRoot = if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
 }
 Push-Location $repoRoot
 try {
+    # Fast-fail for local runs or misconfigured CI shells before Nuitka spends time analyzing.
+    $clCommand = Get-Command cl.exe -ErrorAction SilentlyContinue
+    if ($null -eq $clCommand) {
+        $hint = @(
+            "MSVC C/C++ compiler (cl.exe) was not found on PATH.",
+            "Open a Visual Studio Developer Command Prompt/PowerShell, or run VsDevCmd.bat before invoking this script.",
+            "Required Visual Studio component: Microsoft.VisualStudio.Component.VC.Tools.x86.x64"
+        ) -join " "
+        throw $hint
+    }
+    Write-Host "MSVC compiler found: $($clCommand.Source)"
+
     if (Test-Path "dist") { Remove-Item -Recurse -Force "dist" }
     if (Test-Path "build_gui_entry.build") { Remove-Item -Recurse -Force "build_gui_entry.build" }
 

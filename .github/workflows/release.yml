@@ -18,9 +18,13 @@ concurrency:
   group: release-windows-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
 jobs:
   build:
     runs-on: windows-latest
+    timeout-minutes: 120
 
     steps:
       - name: Checkout
@@ -29,6 +33,7 @@ jobs:
           fetch-depth: 0
 
       - name: Extract version from tag
+        id: release_meta
         shell: pwsh
         run: |
           if ("${{ github.event_name }}" -eq "workflow_dispatch") {
@@ -43,20 +48,22 @@ jobs:
             throw "Invalid tag format: $tag (expected vMAJOR.MINOR.PATCH)"
           }
           $ver = $tag.TrimStart("v")
-          "TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "VERSION=$ver" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "version=$ver" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: Checkout selected tag (manual dispatch)
         if: github.event_name == 'workflow_dispatch'
         shell: pwsh
         run: |
           git fetch --tags --force
-          git checkout "refs/tags/${env:TAG}"
+          git checkout "refs/tags/${{ steps.release_meta.outputs.tag }}"
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
 
       - name: Install dependencies
         shell: pwsh
@@ -70,79 +77,37 @@ jobs:
       - name: Ruff + Tests
         shell: pwsh
         run: |
-          python -m ruff check .
-          python -m pytest
+          python -m ruff check src tests
+          python -m pytest -q --disable-warnings
 
-      - name: Build standalone (Nuitka)
+      - name: Build standalone + zip portable
+        id: portable_bundle
         shell: pwsh
         run: |
-          $nuitkaArgs = @(
-            "--mode=standalone",
-            "--enable-plugin=pyside6",
-            "--assume-yes-for-downloads",
-            "--windows-console-mode=disable",
-            "--output-dir=dist",
-            "--output-filename=ProducerOS",
-            "--include-package=producer_os",
-            "--include-package=librosa",
-            "--include-package=scipy",
-            "--include-package=numba",
-            "--include-package=llvmlite",
-            "--include-module=soundfile",
-            "--include-package-data=librosa",
-            "--include-package-data=scipy",
-            "--include-package-data=numba",
-            "--include-package-data=llvmlite",
-            "--include-module=sklearn",
-            "--include-module=packaging",
-            "--include-module=joblib",
-            "--include-package=qdarktheme",
-            "--include-package-data=qdarktheme",
-            "--module-parameter=numba-disable-jit=yes"
-          )
-          if (Test-Path "assets\app_icon.ico") {
-            $nuitkaArgs += "--windows-icon-from-ico=assets/app_icon.ico"
-          }
-          $nuitkaArgs += "build_gui_entry.py"
-
-          python -m nuitka @nuitkaArgs
-
-      - name: Verify Qt platform plugin bundled
-        shell: pwsh
-        run: |
-          $qwindows = Get-ChildItem -Path "dist\build_gui_entry.dist" -Recurse -Filter "qwindows.dll" -ErrorAction SilentlyContinue |
-            Select-Object -First 1
-          if ($null -eq $qwindows) {
-            throw "Qt platform plugin qwindows.dll not found in standalone build output."
-          }
-          Write-Host "Found qwindows.dll at $($qwindows.FullName)"
-
-      - name: Zip portable
-        shell: pwsh
-        run: |
-          $zip = "ProducerOS-${env:VERSION}-portable-win64.zip"
-          if (Test-Path $zip) { Remove-Item $zip -Force }
-          Compress-Archive -Path "dist\build_gui_entry.dist\*" -DestinationPath $zip
-          "PORTABLE_ZIP=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append
+          $zip = "ProducerOS-${{ steps.release_meta.outputs.version }}-portable-win64.zip"
+          & ".github\scripts\build_windows_nuitka.ps1" -ZipOutput $zip
+          "zip_path=$zip" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: Build installer
         uses: Minionguyjpro/Inno-Setup-Action@v1.2.6
         with:
           path: build/installer/ProducerOS.iss
-          options: /DMyAppVersion=${{ env.VERSION }}
+          options: /DMyAppVersion=${{ steps.release_meta.outputs.version }}
 
       - name: Verify artifacts exist
         shell: pwsh
         run: |
-          if (!(Test-Path $env:PORTABLE_ZIP)) { throw "Portable ZIP missing: $env:PORTABLE_ZIP" }
-          $installer = "dist\ProducerOS-Setup-${env:VERSION}.exe"
+          $portableZip = "${{ steps.portable_bundle.outputs.zip_path }}"
+          if (!(Test-Path $portableZip)) { throw "Portable ZIP missing: $portableZip" }
+          $installer = "dist\ProducerOS-Setup-${{ steps.release_meta.outputs.version }}.exe"
           if (!(Test-Path $installer)) { throw "Installer missing: $installer" }
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ env.TAG }}
-          name: ${{ env.TAG }}
+          tag_name: ${{ steps.release_meta.outputs.tag }}
+          name: ${{ steps.release_meta.outputs.tag }}
+          generate_release_notes: true
           files: |
-            ${{ env.PORTABLE_ZIP }}
-            dist/ProducerOS-Setup-${{ env.VERSION }}.exe
+            ${{ steps.portable_bundle.outputs.zip_path }}
+            dist/ProducerOS-Setup-${{ steps.release_meta.outputs.version }}.exe

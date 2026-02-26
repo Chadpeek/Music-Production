@@ -60,8 +60,10 @@ What it does:
 - installs Python + dependencies
 - runs Ruff and tests
 - builds a standalone Windows app (Nuitka)
+- runs a packaged GUI smoke test (launch + timed exit)
 - builds a portable ZIP
 - builds an installer (Inno Setup)
+- optionally signs Windows artifacts (portable EXE + installer) when signing secrets are configured
 - verifies artifacts exist
 - uploads assets to the GitHub Release
 - enables GitHub-generated release notes (`generate_release_notes: true`)
@@ -95,6 +97,53 @@ This workflow:
 GitHub release notes are generated automatically by the release upload step in `release.yml`.
 
 This reduces manual maintenance and ensures each release page contains patch notes.
+
+## Packaged GUI Smoke Test (CI)
+
+The shared Windows build script (`.github/scripts/build_windows_nuitka.ps1`) now performs a post-build smoke test of the packaged executable:
+
+- verifies `qwindows.dll` exists
+- runs `ProducerOS.exe` with `PRODUCER_OS_SMOKE_TEST=1`
+- the GUI launches and exits automatically after a short timer
+- CI fails if startup crashes or the process hangs
+
+This catches packaging/runtime issues that file-existence checks alone cannot catch.
+
+## Optional Code Signing (Placeholder Integration)
+
+Producer-OS includes an optional `signtool`-based signing script:
+
+- `.github/scripts/sign_windows_artifacts.ps1`
+
+It is wired into the Windows build/release pipeline with a no-op fallback when signing is not configured.
+
+### Environment / Secret Names
+
+Configure these GitHub Actions secrets to enable signing:
+
+- `WINDOWS_SIGN_ENABLE` (`1` to enable)
+- `WINDOWS_SIGN_CERT_B64` (base64-encoded `.pfx`)
+- `WINDOWS_SIGN_CERT_PASSWORD`
+- `WINDOWS_SIGN_TIMESTAMP_URL` (optional; defaults to DigiCert timestamp URL)
+- `WINDOWS_SIGNTOOL_PATH` (optional, if `signtool.exe` is not on PATH)
+
+### Behavior
+
+- Signing disabled or missing secrets:
+  - workflow logs `Signing skipped (placeholders mode)`
+  - build/release continues
+- Signing enabled but signing fails:
+  - workflow fails
+
+### Local Dry Run (No Secrets)
+
+You can verify the placeholder behavior locally:
+
+```powershell
+& ".github\scripts\sign_windows_artifacts.ps1" -Paths @("dist\build_gui_entry.dist\ProducerOS.exe")
+```
+
+To test actual signing locally, set the environment variables in your shell first and ensure `signtool.exe` is available.
 
 ## Practical Recommendations
 

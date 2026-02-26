@@ -29,30 +29,39 @@ Producer-OS is a rule-based organizer for music production libraries and incomin
 It uses a shared Python engine across both a desktop GUI (PySide6) and a CLI.
 
 Current v2 classification is focused on `.wav` files and uses a deterministic hybrid pipeline (folder hints, filename hints, audio features, pitch/glide analysis) designed for explainability and repeatability.
+The GUI now includes a low-confidence review workflow so you can inspect and correct uncertain classifications before re-running copy/move operations.
 
 ## Key Features
 
 - Deterministic hybrid WAV classification (no ML)
 - Shared engine for GUI and CLI
 - Confidence scoring with low-confidence flagging and top-3 candidates
+- GUI low-confidence review queue with override + hint-save workflow
 - Explainable per-file reasoning in `run_report.json` (log-writing modes)
 - Feature caching via `feature_cache.json`
+- `benchmark-classifier` command for distribution/confusion audits and tuning
+- Preview-before-apply GUI tab for safer review before `copy`/`move`
+- Built-in troubleshooting panel (logs/config/report/dependency checks)
 - Safety-first modes (`analyze`, `dry-run`, `copy`, `move`)
 - Audit trail support with `undo-last-run`
 - JSON config + bucket/style mappings with schema validation
 - Portable mode support (`portable.flag` or `--portable`)
-- Windows portable ZIP and installer releases
+- Windows portable ZIP and installer releases with automated release notes
+
+## System Requirements
+
+See [`docs/SYSTEM_REQUIREMENTS.md`](docs/SYSTEM_REQUIREMENTS.md) for runtime, hardware, and build requirements.
 
 ## Installation
 
 ### Windows Release (Recommended)
 
-Download the latest Windows builds from GitHub Releases:
+Download the latest Windows builds from [GitHub Releases](https://github.com/KidChadd/Producer-OS/releases):
 
 - Portable ZIP (`ProducerOS-<version>-portable-win64.zip`)
 - Installer (`ProducerOS-Setup-<version>.exe`)
 
-Releases: `https://github.com/KidChadd/Producer-OS/releases`
+Releases: [github.com/KidChadd/Producer-OS/releases](https://github.com/KidChadd/Producer-OS/releases)
 
 ### Install From Source
 
@@ -75,6 +84,8 @@ CLI-only:
 pip install -e .
 ```
 
+See [`docs/SYSTEM_REQUIREMENTS.md`](docs/SYSTEM_REQUIREMENTS.md) before source installs on new machines.
+
 ## Quick Start
 
 ### CLI
@@ -85,6 +96,7 @@ producer-os analyze C:\path\to\inbox C:\path\to\hub
 producer-os dry-run C:\path\to\inbox C:\path\to\hub --verbose
 producer-os copy C:\path\to\inbox C:\path\to\hub
 producer-os move C:\path\to\inbox C:\path\to\hub
+producer-os benchmark-classifier C:\path\to\inbox C:\path\to\hub
 ```
 
 ### GUI
@@ -93,6 +105,12 @@ producer-os move C:\path\to\inbox C:\path\to\hub
 producer-os-gui
 ```
 
+Recommended first run:
+
+- Start with `analyze`
+- Review the `Low Confidence Review` tab
+- Save hints/overrides, then rerun before `copy` or `move`
+
 ### Module Entry
 
 ```powershell
@@ -100,29 +118,42 @@ python -m producer_os --help
 python -m producer_os gui
 ```
 
+## Screenshots
+
+### GUI
+
+![Producer-OS GUI Screenshot](assets/gui-screenshot.svg)
+
+### CLI
+
+![Producer-OS CLI Screenshot](assets/cli-screenshot.svg)
+
 ## Documentation
 
 ### Technical Docs (`docs/`)
 
-- `docs/README.md` - documentation index and detailed CLI mode behavior
-- `docs/CLASSIFICATION.md` - hybrid WAV classifier, confidence, reporting, cache
-- `docs/TROUBLESHOOTING.md` - common setup/runtime issues and fixes
-- `docs/RELEASE_PROCESS.md` - versioning and release workflow details
+- [`docs/SYSTEM_REQUIREMENTS.md`](docs/SYSTEM_REQUIREMENTS.md) - system, runtime, and build requirements
+- [`docs/README.md`](docs/README.md) - documentation index and detailed CLI mode behavior
+- [`docs/CLASSIFICATION.md`](docs/CLASSIFICATION.md) - hybrid WAV classifier, confidence, reporting, cache
+- [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) - common setup/runtime issues and fixes
+- [`docs/RELEASE_PROCESS.md`](docs/RELEASE_PROCESS.md) - versioning and release workflow details
+- [`docs/CLI_REFERENCE.md`](docs/CLI_REFERENCE.md) - CLI commands, flags, and benchmark usage
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) - engine/UI/services architecture and data flow
 
 ### Project Docs (Root)
 
-- `RULES_AND_USAGE.md`
-- `TESTING_GUIDE.md`
-- `CONTRIBUTING.md`
-- `SUPPORT.md`
-- `SECURITY.md`
-- `CODE_OF_CONDUCT.md`
-- `CHANGELOG.md`
+- [`RULES_AND_USAGE.md`](RULES_AND_USAGE.md)
+- [`TESTING_GUIDE.md`](TESTING_GUIDE.md)
+- [`CONTRIBUTING.md`](CONTRIBUTING.md)
+- [`SUPPORT.md`](SUPPORT.md)
+- [`SECURITY.md`](SECURITY.md)
+- [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)
+- [`CHANGELOG.md`](CHANGELOG.md)
 
 ## License
 
 Licensed under GPL-3.0-only.
-See `LICENSE` for details.
+See [`LICENSE`](LICENSE) for details.
 
 ## Star History
 

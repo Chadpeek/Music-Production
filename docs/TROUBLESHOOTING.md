@@ -28,11 +28,27 @@ Cause:
 Fix:
 
 - Download the latest GitHub Release build
-- If rebuilding locally/CI, ensure the PySide6 plugin is bundled (the current CI workflow already verifies `qwindows.dll`)
+- If rebuilding locally/CI, ensure the PySide6 plugin is bundled (the current CI workflow verifies `qwindows.dll` and runs a packaged GUI smoke test)
 
 Related docs:
 
 - `docs/RELEASE_PROCESS.md`
+
+## Built-in Troubleshooting Panel (GUI)
+
+The GUI Options page includes a Troubleshooting card with quick actions:
+
+- Open config folder
+- Open logs folder
+- Open last report
+- Verify audio dependencies
+- Qt plugin check (packaged builds)
+
+It also displays:
+
+- portable mode status
+- audio dependency check summary
+- latest Qt plugin check result
 
 ## `analyze` Mode Did Not Create Logs or Reports
 
@@ -134,3 +150,23 @@ Current behavior:
 Recommendation:
 
 - Let `version.yml` own version tags unless you are intentionally rebuilding an existing tag via manual release dispatch
+
+## Windows SmartScreen / Unsigned EXE Warning
+
+Symptom:
+
+- Windows warns that the app is from an unknown publisher
+
+Cause:
+
+- The artifact is unsigned (or signing is not configured in CI)
+
+Current CI behavior:
+
+- Release/build workflows include optional code-signing placeholders
+- If signing secrets are not configured, builds still complete and log that signing was skipped
+
+If you maintain releases:
+
+- Configure the signing secrets described in `docs/RELEASE_PROCESS.md`
+- Rebuild the release to produce signed artifacts

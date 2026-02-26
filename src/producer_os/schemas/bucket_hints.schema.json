@@ -1,0 +1,44 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "BucketHints",
+  "description": "Additive user keyword hints for deterministic folder/filename classification.",
+  "type": "object",
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1
+    },
+    "folder_keywords": {
+      "type": "object",
+      "patternProperties": {
+        ".+": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "filename_keywords": {
+      "type": "object",
+      "patternProperties": {
+        ".+": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "version",
+    "folder_keywords",
+    "filename_keywords"
+  ],
+  "additionalProperties": false
+}

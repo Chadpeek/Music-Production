@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import cProfile
+import json
 import pstats
 import sys
 import time
@@ -32,6 +33,24 @@ def main() -> int:
     parser.add_argument("--sort", default="cumulative", help="cProfile sort key (default: cumulative)")
     parser.add_argument("--progress-every", type=int, default=100, help="Print progress every N files (0 disables)")
     parser.add_argument(
+        "--json-out",
+        type=Path,
+        default=None,
+        help="Optional JSON output path for benchmark metrics (e.g. benchmarks/latest_engine_extract.json)",
+    )
+    parser.add_argument(
+        "--benchmark-mode",
+        action="store_true",
+        help="Convenience mode for reproducible local/CI perf runs (writes JSON if --json-out not provided)",
+    )
+    parser.add_argument("--compare", type=Path, default=None, help="Optional prior benchmark JSON to compare against")
+    parser.add_argument(
+        "--warn-threshold-pct",
+        type=float,
+        default=10.0,
+        help="Warn when ms/file regresses by more than this percent (used with --compare)",
+    )
+    parser.add_argument(
         "--hub-dir",
         type=Path,
         default=Path(".tmp_profile_hub"),
@@ -50,6 +69,10 @@ def main() -> int:
     if not wavs:
         print("error: no .wav files found", file=sys.stderr)
         return 3
+
+    json_out = args.json_out
+    if args.benchmark_mode and json_out is None:
+        json_out = Path("benchmarks/latest_engine_extract.json")
 
     print(f"sample_root={sample_root}")
     print(f"wav_files={len(wavs)}")
@@ -77,6 +100,46 @@ def main() -> int:
     print(f"elapsed_seconds={elapsed:.3f}")
     print(f"files_per_second={files_per_sec:.2f}")
     print(f"ms_per_file={ms_per_file:.2f}")
+
+    metrics = {
+        "version": 1,
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "sample_root": str(sample_root),
+        "wav_files_profiled": len(wavs),
+        "subset_strategy": "lexical_first_n",
+        "limit": int(args.limit),
+        "profile_enabled": bool(args.profile),
+        "elapsed_seconds": round(elapsed, 6),
+        "files_per_second": round(files_per_sec, 6),
+        "ms_per_file": round(ms_per_file, 6),
+        "progress_every": int(args.progress_every),
+    }
+
+    if json_out is not None:
+        out_path = json_out.resolve()
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+        print(f"json_out={out_path}")
+
+    if args.compare is not None:
+        try:
+            prev = json.loads(args.compare.resolve().read_text(encoding="utf-8"))
+            prev_ms = float(prev.get("ms_per_file", 0.0) or 0.0)
+            curr_ms = float(metrics.get("ms_per_file", 0.0) or 0.0)
+            delta_ms = curr_ms - prev_ms
+            delta_pct = ((delta_ms / prev_ms) * 100.0) if prev_ms > 0 else 0.0
+            print(f"compare_prev_ms_per_file={prev_ms:.6f}")
+            print(f"compare_curr_ms_per_file={curr_ms:.6f}")
+            print(f"compare_delta_ms_per_file={delta_ms:+.6f}")
+            print(f"compare_delta_pct={delta_pct:+.2f}")
+            if delta_pct > float(args.warn_threshold_pct):
+                print(
+                    f"warning: performance regression exceeds threshold "
+                    f"({delta_pct:+.2f}% > {float(args.warn_threshold_pct):.2f}%)",
+                    file=sys.stderr,
+                )
+        except Exception as exc:
+            print(f"warning: failed to compare benchmark JSON: {exc}", file=sys.stderr)
 
     if prof is not None:
         stats = pstats.Stats(prof)

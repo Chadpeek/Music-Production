@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import importlib
 import json
+import sys
 from pathlib import Path
 from typing import Any, Optional, cast
 
@@ -62,6 +64,7 @@ class ProducerOSWindow(QMainWindow):
         self.engine_runner: Optional[EngineRunner] = None
         self.current_report: dict[str, Any] = {}
         self.current_report_path = ""
+        self._last_engine_bucket_ids: list[str] = []
         self._visited_max_index = 0
         self._current_step_index = 0
 
@@ -73,6 +76,7 @@ class ProducerOSWindow(QMainWindow):
         self._apply_theme_only(self.state.theme)
         self._set_status("Ready", kind="neutral", pulsing=False)
         self._set_current_step(0, animate=False)
+        self._refresh_troubleshooting_status()
 
     # ------------------------------------------------------------------
     # UI shell
@@ -209,18 +213,23 @@ class ProducerOSWindow(QMainWindow):
         self.options_page.themeChanged.connect(self.on_theme_changed)
         self.options_page.developerToolsChanged.connect(self.on_dev_tools_changed)
         self.options_page.openConfigRequested.connect(self.open_config_folder)
+        self.options_page.openLogsRequested.connect(self.open_logs_folder)
         self.options_page.openLastReportRequested.connect(self.open_last_report)
         self.options_page.validateSchemasRequested.connect(self.validate_schemas)
+        self.options_page.verifyAudioDependenciesRequested.connect(self.verify_audio_dependencies)
+        self.options_page.qtPluginCheckRequested.connect(self.qt_plugin_check)
 
         self.run_page.analyzeRequested.connect(lambda: self.start_engine_run("analyze"))
         self.run_page.runRequested.connect(lambda: self.start_engine_run(self.state.action))
         self.run_page.saveReportRequested.connect(self.save_run_report)
+        self.run_page.hintSaveRequested.connect(self.save_bucket_hint_from_review)
 
     def _initialize_state(self) -> None:
         self.update_inbox_preview()
         self.update_hub_warning()
         self.run_page.set_action(self.state.action)
         self.options_page.set_developer_tools_visible(self.state.developer_tools, animate=False)
+        self._refresh_troubleshooting_status()
 
     # ------------------------------------------------------------------
     # Navigation
@@ -357,6 +366,7 @@ class ProducerOSWindow(QMainWindow):
         self.state.hub_path = path_str
         self.save_setting("hub_path", path_str)
         self.update_hub_warning()
+        self._refresh_troubleshooting_status()
 
     def on_action_changed(self, action: str) -> None:
         if action not in {"move", "copy"}:
@@ -406,9 +416,44 @@ class ProducerOSWindow(QMainWindow):
         self.state.developer_tools = checked
         self.save_setting("developer_tools", checked)
 
+    def _refresh_troubleshooting_status(self) -> None:
+        try:
+            self.options_page.set_portable_mode_status(self.config_service.is_portable_mode())
+        except Exception:
+            pass
+        # Provide a lightweight passive Qt plugin status hint.
+        try:
+            if getattr(sys, "frozen", False):
+                exe_dir = Path(sys.executable).resolve().parent
+                has_qwindows = any((exe_dir).rglob("qwindows.dll"))
+                self.options_page.set_qt_plugin_status("qwindows.dll found" if has_qwindows else "qwindows.dll not found")
+            else:
+                self.options_page.set_qt_plugin_status("source run (packaged plugin check applies to frozen builds)")
+        except Exception:
+            self.options_page.set_qt_plugin_status("check failed")
+
+    def _build_engine_config(self) -> dict[str, Any]:
+        cfg = dict(self.config or {})
+        try:
+            cfg["config_dir"] = str(self.config_service.get_config_dir())
+            cfg["config_path"] = str(self.config_service.get_config_path())
+            cfg["bucket_hints_path"] = str(self.config_service.get_bucket_hints_path())
+            cfg["bucket_hints"] = self.config_service.load_bucket_hints()
+        except Exception:
+            pass
+        return cfg
+
     def open_config_folder(self) -> None:
         cfg_dir = self.config_service.get_config_dir()
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(cfg_dir)))
+
+    def open_logs_folder(self) -> None:
+        hub_path_str = self.state.hub_path
+        if not hub_path_str:
+            QMessageBox.information(self, "Open logs", "Please select a hub folder first.")
+            return
+        logs_dir = Path(hub_path_str) / "logs"
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(logs_dir)))
 
     def open_last_report(self) -> None:
         hub_path_str = self.state.hub_path
@@ -432,9 +477,98 @@ class ProducerOSWindow(QMainWindow):
             self.config_service.load_config()
             self.config_service.load_styles()
             self.config_service.load_buckets()
+            self.config_service.load_bucket_hints()
             QMessageBox.information(self, "Schema validation", "All configuration files are valid.")
         except Exception as exc:
             QMessageBox.warning(self, "Schema validation", f"Validation failed: {exc}")
+
+    def verify_audio_dependencies(self) -> None:
+        modules = ["soundfile", "librosa", "scipy", "numba", "llvmlite"]
+        status_parts: list[str] = []
+        for name in modules:
+            try:
+                importlib.import_module(name)
+                status_parts.append(f"{name}:ok")
+            except Exception as exc:
+                status_parts.append(f"{name}:missing ({exc.__class__.__name__})")
+        summary = ", ".join(status_parts)
+        self.options_page.set_audio_dependencies_status(summary)
+        QMessageBox.information(self, "Audio dependencies", summary)
+
+    def qt_plugin_check(self) -> None:
+        try:
+            if not getattr(sys, "frozen", False):
+                msg = "Source run detected. Qt platform plugin checks are primarily for packaged builds."
+                self.options_page.set_qt_plugin_status(msg)
+                QMessageBox.information(self, "Qt plugin check", msg)
+                return
+            exe_dir = Path(sys.executable).resolve().parent
+            matches = list(exe_dir.rglob("qwindows.dll"))
+            if matches:
+                msg = f"Found qwindows.dll at {matches[0]}"
+                self.options_page.set_qt_plugin_status("qwindows.dll found")
+                QMessageBox.information(self, "Qt plugin check", msg)
+            else:
+                msg = "qwindows.dll not found under the application directory."
+                self.options_page.set_qt_plugin_status("qwindows.dll not found")
+                QMessageBox.warning(self, "Qt plugin check", msg)
+        except Exception as exc:
+            self.options_page.set_qt_plugin_status("check failed")
+            QMessageBox.warning(self, "Qt plugin check", f"Check failed: {exc}")
+
+    def save_bucket_hint_from_review(self, source: str, kind: str, bucket: str, token: str) -> None:
+        token = (token or "").strip().lower()
+        bucket = (bucket or "").strip()
+        if not token or not bucket:
+            self.run_page.set_review_feedback("No token selected for hint save.", success=False)
+            return
+        key = "filename_keywords" if kind == "filename" else "folder_keywords"
+        try:
+            hints = self.config_service.load_bucket_hints()
+            target = hints.setdefault(key, {})
+            if not isinstance(target, dict):
+                target = {}
+                hints[key] = target
+
+            existing_bucket: Optional[str] = None
+            for bkt, values in target.items():
+                if not isinstance(values, list):
+                    continue
+                if token in {str(v).strip().lower() for v in values}:
+                    existing_bucket = str(bkt)
+                    break
+
+            if existing_bucket and existing_bucket != bucket:
+                reply = QMessageBox.question(
+                    self,
+                    "Conflicting hint token",
+                    (
+                        f"The {kind} token '{token}' already exists for bucket '{existing_bucket}'.\n\n"
+                        f"Add it to '{bucket}' as well?"
+                    ),
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
+                )
+                if reply != QMessageBox.StandardButton.Yes:
+                    self.run_page.set_review_feedback("Hint save cancelled.", success=False)
+                    return
+
+            bucket_values = target.setdefault(bucket, [])
+            if not isinstance(bucket_values, list):
+                bucket_values = []
+                target[bucket] = bucket_values
+            if token in {str(v).strip().lower() for v in bucket_values}:
+                self.run_page.set_review_feedback(f"Hint already exists: {kind} '{token}' -> {bucket}", success=True)
+                self.run_page.record_saved_hint(source, kind, bucket, token)
+                return
+            bucket_values.append(token)
+            bucket_values[:] = sorted({str(v).strip().lower() for v in bucket_values if str(v).strip()})
+            hints["version"] = 1
+            self.config_service.save_bucket_hints(hints)
+            self.run_page.record_saved_hint(source, kind, bucket, token)
+            self.run_page.set_review_feedback(f"Saved {kind} hint '{token}' -> {bucket}. Rerun to apply.", success=True)
+        except Exception as exc:
+            self.run_page.set_review_feedback(f"Failed to save hint: {exc}", success=False)
 
     # ------------------------------------------------------------------
     # Run page / engine execution
@@ -485,9 +619,10 @@ class ProducerOSWindow(QMainWindow):
             inbox_dir=Path(inbox_path),
             hub_dir=Path(hub_path),
             style_service=self.style_service,
-            config=self.config,
+            config=self._build_engine_config(),
             bucket_service=self.bucket_service,
         )
+        self._last_engine_bucket_ids = list(engine.BUCKET_RULES.keys())
         self.engine_runner = EngineRunner(engine, mode)
         self.engine_runner.finished.connect(self.on_engine_finished)
         self.engine_runner.start()
@@ -507,7 +642,7 @@ class ProducerOSWindow(QMainWindow):
             counts_str = ", ".join(f"{bucket}: {count}" for bucket, count in counts.items())
             log_lines.append(f"{pack['pack']}: {counts_str}")
 
-        self.run_page.set_results(report, log_lines)
+        self.run_page.set_results(report, log_lines, bucket_choices=self._last_engine_bucket_ids)
         if report.get("failed", 0):
             self._set_status("Completed with warnings", kind="warning", pulsing=False)
         else:
@@ -520,11 +655,17 @@ class ProducerOSWindow(QMainWindow):
         if not dest:
             return
         try:
+            export_payload = dict(self.current_report or {})
+            manual_review = self.run_page.get_manual_review_overlay()
+            if manual_review:
+                export_payload["manual_review"] = manual_review
             if self.current_report_path and Path(self.current_report_path).exists():
-                data = Path(self.current_report_path).read_text(encoding="utf-8")
-                Path(dest).write_text(data, encoding="utf-8")
+                data = json.loads(Path(self.current_report_path).read_text(encoding="utf-8"))
+                if manual_review:
+                    data["manual_review"] = manual_review
+                Path(dest).write_text(json.dumps(data, indent=2), encoding="utf-8")
             else:
-                Path(dest).write_text(json.dumps(self.current_report, indent=2), encoding="utf-8")
+                Path(dest).write_text(json.dumps(export_payload, indent=2), encoding="utf-8")
             QMessageBox.information(self, "Save report", "Report saved successfully.")
         except Exception as exc:
             QMessageBox.warning(self, "Save report", f"Failed to save report: {exc}")

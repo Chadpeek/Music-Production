@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from typing import Optional
 
+from PySide6.QtCore import QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
@@ -37,6 +39,13 @@ def main() -> int:
 
     win = ProducerOSWindow(app_icon=app_icon)
     win.show()
+
+    if str(os.environ.get("PRODUCER_OS_SMOKE_TEST", "")).strip() == "1":
+        try:
+            delay_ms = int(str(os.environ.get("PRODUCER_OS_SMOKE_TEST_MS", "250")).strip() or "250")
+        except Exception:
+            delay_ms = 250
+        QTimer.singleShot(max(50, delay_ms), app.quit)
 
     try:
         return app.exec()

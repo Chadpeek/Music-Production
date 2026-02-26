@@ -115,6 +115,14 @@ def generate_silence(duration: float = 0.5, sr: int = 22050) -> np.ndarray:
     return np.zeros(int(sr * duration), dtype=np.float32)
 
 
+def generate_hat_noise(duration: float = 0.12, sr: int = 22050) -> np.ndarray:
+    """Generate deterministic bright/noisy hi-hat-like audio."""
+    rng = np.random.default_rng(0)
+    x = rng.standard_normal(int(sr * duration)).astype(np.float32)
+    env = np.exp(-np.linspace(0.0, 6.0, x.size, dtype=np.float32))
+    return (x * env).astype(np.float32)
+
+
 def test_folder_hint_detection(tmp_path):
     """Files in folders containing bucket keywords should receive strong folder hint."""
     inbox = tmp_path / "inbox"
@@ -260,6 +268,8 @@ def test_run_report_contains_hybrid_reasoning_fields(tmp_path):
         assert key in entry, f"Missing required report field: {key}"
     assert len(entry["top_candidates"]) == 3, "Top 3 candidates must be logged"
     assert len(entry["top_3_candidates"]) == 3, "Top 3 candidate alias must be logged"
+    assert "feature_cache_stats" in report_data, "run_report.json must include feature cache stats"
+    assert isinstance(report_data["feature_cache_stats"], dict)
 
 
 def test_feature_cache_json_created_and_reused(tmp_path):
@@ -293,6 +303,102 @@ def test_feature_cache_json_created_and_reused(tmp_path):
     assert features["duration"] == cached_duration, "Cached features should be reused for unchanged file"
 
 
+def test_run_reports_feature_cache_stats_and_analyze_is_not_persisted(tmp_path):
+    inbox = tmp_path / "inbox"
+    pack = inbox / "statsPack"
+    pack.mkdir(parents=True)
+    sr = 22050
+    sf.write(pack / "tone.wav", generate_sine(0.5, sr=sr, freq=80.0), sr)
+    hub = tmp_path / "hub"
+    hub.mkdir()
+
+    style_service = StyleService(load_default_styles())
+    engine = ProducerOSEngine(inbox, hub, style_service, config={}, bucket_service=BucketService({}))
+    analyze_report = engine.run(mode="analyze")
+    stats = analyze_report.get("feature_cache_stats", {})
+    assert isinstance(stats, dict), "Analyze report must include feature_cache_stats"
+    assert stats.get("persisted") is False, "Analyze mode must not persist feature cache"
+    assert analyze_report.get("files_skipped_non_wav", 0) == 0
+
+    copy_report = engine.run(mode="copy")
+    stats_copy = copy_report.get("feature_cache_stats", {})
+    assert isinstance(stats_copy, dict)
+    assert "hits" in stats_copy and "misses" in stats_copy and "computed" in stats_copy
+    assert isinstance(stats_copy.get("persisted"), bool)
+
+
+def test_benchmark_report_json_written_with_expected_fields(tmp_path):
+    inbox = tmp_path / "inbox"
+    pack = inbox / "benchPack"
+    pack.mkdir(parents=True)
+    sr = 22050
+    sf.write(pack / "tone.wav", generate_sine(0.5, sr=sr, freq=55.0), sr)
+    sf.write(pack / "kick.wav", generate_transient_kick(duration=0.2, sr=sr, freq=60.0), sr)
+    (pack / "skip.txt").write_text("ignore", encoding="utf-8")
+
+    hub = tmp_path / "hub"
+    hub.mkdir()
+    style_service = StyleService(load_default_styles())
+    engine = ProducerOSEngine(inbox, hub, style_service, config={}, bucket_service=BucketService({}))
+    out_path = hub / "logs" / "benchmark_report.json"
+
+    benchmark = engine.run_benchmark(output_path=out_path, top_confusions=5)
+    assert out_path.exists(), "benchmark-classifier JSON output must be written"
+    written = json.loads(out_path.read_text(encoding="utf-8"))
+
+    for payload in (benchmark, written):
+        for key in (
+            "version",
+            "timestamp",
+            "inbox",
+            "hub",
+            "files_classified",
+            "files_skipped_non_wav",
+            "low_confidence",
+            "bucket_distribution",
+            "confusion_pairs",
+            "representative_misfits",
+            "feature_cache_stats",
+            "tuning_snapshot",
+        ):
+            assert key in payload, f"Missing benchmark field: {key}"
+        assert payload["files_classified"] == 2
+        assert payload["files_skipped_non_wav"] == 1
+        assert isinstance(payload["feature_cache_stats"], dict)
+
+
+def test_user_bucket_hints_are_additive_and_logged(tmp_path):
+    inbox = tmp_path / "inbox"
+    pack = inbox / "neutralPack"
+    pack.mkdir(parents=True)
+    sr = 22050
+    sf.write(pack / "ultraslidez.wav", generate_silence(duration=0.4, sr=sr), sr)
+    hub = tmp_path / "hub"
+    hub.mkdir()
+
+    style_service = StyleService(load_default_styles())
+    engine = ProducerOSEngine(
+        inbox,
+        hub,
+        style_service,
+        config={
+            "bucket_hints": {
+                "version": 1,
+                "folder_keywords": {},
+                "filename_keywords": {"808s": ["ultraslidez"], "NotABucket": ["ignored"]},
+            }
+        },
+        bucket_service=BucketService({}),
+    )
+    bucket, _category, _confidence, _candidates, _low_conf, reason = engine._classify_file(pack / "ultraslidez.wav")
+    assert bucket == "808s", "User filename hint should influence classification additively"
+    filename_matches = reason.get("filename_matches", [])
+    assert any(
+        m.get("keyword") == "ultraslidez" and m.get("bucket") == "808s" and m.get("source") == "user_hint"
+        for m in filename_matches
+    ), "User hints should be logged in filename_matches"
+
+
 def test_hybrid_idempotent_second_run(tmp_path):
     """Second copy run should be idempotent for synthesized WAV input."""
     inbox = tmp_path / "inbox"
@@ -313,3 +419,73 @@ def test_hybrid_idempotent_second_run(tmp_path):
     assert report2["files_copied"] == 0, "Second run should not duplicate copies"
     assert report2["skipped_existing"] >= 1, "Second run should skip existing destinations"
     assert len(list(hub.rglob("glide.wav"))) == 1, "No duplicate destination files should be created"
+
+
+def test_pitch_gating_skips_yin_for_bright_hat_like_audio(tmp_path):
+    inbox = tmp_path / "inbox"
+    pack = inbox / "hats"
+    pack.mkdir(parents=True)
+    sr = 22050
+    file_path = pack / "hat.wav"
+    sf.write(file_path, generate_hat_noise(duration=0.12, sr=sr), sr)
+
+    hub = tmp_path / "hub"
+    hub.mkdir()
+    engine = ProducerOSEngine(inbox, hub, StyleService(load_default_styles()), config={}, bucket_service=BucketService({}))
+
+    features = engine._extract_features(file_path)
+    assert features.get("pitch_available") is False
+    assert features.get("pitch_skipped") is True
+    assert features.get("pitch_skip_reason") in {"hat_like_percussive", "kick_like_percussive"}
+
+    _bucket, _cat, _conf, _cand, _low, reason = engine._classify_file(file_path)
+    pitch_summary = reason.get("pitch_summary", {})
+    assert pitch_summary.get("pitch_skipped") is True
+    assert "pitch_skip_reason" in pitch_summary
+
+
+def test_pitch_gating_does_not_skip_tonal_glide_808(tmp_path):
+    inbox = tmp_path / "inbox"
+    pack = inbox / "808s"
+    pack.mkdir(parents=True)
+    sr = 22050
+    file_path = pack / "glide.wav"
+    sf.write(file_path, generate_glide(duration=0.7, sr=sr, f_start=60.0, f_end=50.0), sr)
+
+    hub = tmp_path / "hub"
+    hub.mkdir()
+    engine = ProducerOSEngine(inbox, hub, StyleService(load_default_styles()), config={}, bucket_service=BucketService({}))
+
+    features = engine._extract_features(file_path)
+    assert features.get("pitch_skipped") is False
+    assert features.get("pitch_available") is True
+    assert float(features.get("voiced_ratio", 0.0) or 0.0) > 0.0
+
+
+def test_parallel_workers_preserve_deterministic_order_and_results(tmp_path):
+    inbox = tmp_path / "inbox"
+    pack = inbox / "mixedPack"
+    pack.mkdir(parents=True)
+    sr = 22050
+    sf.write(pack / "01_glide.wav", generate_glide(duration=0.7, sr=sr, f_start=65.0, f_end=50.0), sr)
+    sf.write(pack / "02_kick.wav", generate_transient_kick(duration=0.2, sr=sr, freq=60.0), sr)
+    sf.write(pack / "03_hat.wav", generate_hat_noise(duration=0.12, sr=sr), sr)
+    sf.write(pack / "04_tone.wav", generate_sine(0.5, sr=sr, freq=55.0), sr)
+
+    hub1 = tmp_path / "hub_seq"
+    hub2 = tmp_path / "hub_par"
+    hub1.mkdir()
+    hub2.mkdir()
+    style = StyleService(load_default_styles())
+
+    eng_seq = ProducerOSEngine(inbox, hub1, style, config={}, bucket_service=BucketService({}))
+    eng_par = ProducerOSEngine(inbox, hub2, style, config={}, bucket_service=BucketService({}))
+
+    r_seq = eng_seq.run(mode="analyze", developer_options={"workers": 1})
+    r_par = eng_par.run(mode="analyze", developer_options={"workers": 4})
+
+    seq_files = [f for p in r_seq["packs"] for f in p["files"]]
+    par_files = [f for p in r_par["packs"] for f in p["files"]]
+    assert [f["source"] for f in seq_files] == [f["source"] for f in par_files]
+    assert [f["chosen_bucket"] for f in seq_files] == [f["chosen_bucket"] for f in par_files]
+    assert [f["top_3_candidates"] for f in seq_files] == [f["top_3_candidates"] for f in par_files]

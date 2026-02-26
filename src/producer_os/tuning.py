@@ -64,6 +64,24 @@ PITCH_WEIGHTS: Dict[str, float] = {
     "stability_bonus": 10,
 }
 
+# Deterministic pitch-analysis gating (Phase 2)
+PITCH_GATING_ENABLED = True
+PITCH_GATING_THRESHOLDS: Dict[str, float] = {
+    "hat_duration_max": 0.22,
+    "hat_centroid_min": 5000.0,
+    "hat_lowfreq_max": 0.12,
+    "hat_flatness_min": 0.40,
+    "hat_zcr_min": 0.12,
+    "kick_duration_max": 0.22,
+    "kick_transient_min": 4.5,
+    "kick_voiced_ratio_force_skip_max": 0.05,
+    "kick_centroid_min": 800.0,
+}
+
+# Parallel extraction rollout (opt-in; CLI --workers controls actual value)
+PARALLEL_EXTRACTION_ENABLED = True
+PARALLEL_WORKERS_DEFAULT = 1
+
 # ---------------------------------------------------------------------------
 # Internal deterministic analysis parameters (also centralized here)
 ANALYSIS_PARAMS: Dict[str, float] = {

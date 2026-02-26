@@ -44,3 +44,5 @@ _inbox/
 # Local profiling / sample corpora (machine-specific)
 .tmp_profile_hub*/
 test related samples unorganised/
+benchmarks/_tmp_synth_corpus/
+benchmarks/latest_engine_extract.json

@@ -1,0 +1,90 @@
+name: Performance (Engine Extract)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  perf-engine-extract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev,gui]"
+
+      - name: Generate deterministic synthetic WAV corpus
+        shell: bash
+        run: |
+          python - <<'PY'
+          import math
+          from pathlib import Path
+          import numpy as np
+          import soundfile as sf
+
+          root = Path("benchmarks/_tmp_synth_corpus")
+          root.mkdir(parents=True, exist_ok=True)
+          sr = 22050
+          rng = np.random.default_rng(0)
+
+          def write(path, x):
+              path.parent.mkdir(parents=True, exist_ok=True)
+              sf.write(path, x.astype(np.float32), sr)
+
+          for i in range(60):
+              t = np.linspace(0, 0.7, int(sr*0.7), False)
+              ratio = 50.0 / 65.0
+              inst = 65.0 * (ratio ** (t / 0.7))
+              phase = 2 * math.pi * np.cumsum(inst) / sr
+              x = np.sin(phase) * np.exp(-t)
+              write(root / "808s" / f"glide_{i:03d}.wav", x)
+
+          for i in range(60):
+              t = np.linspace(0, 0.2, int(sr*0.2), False)
+              env = np.exp(-t * 10.0)
+              x = env * np.sin(2 * math.pi * 60.0 * t)
+              x[: max(1, int(sr*0.005))] *= 5.0
+              write(root / "Kicks" / f"kick_{i:03d}.wav", x)
+
+          for i in range(60):
+              n = int(sr * 0.12)
+              x = rng.standard_normal(n).astype(np.float32)
+              env = np.exp(-np.linspace(0.0, 6.0, n, dtype=np.float32))
+              write(root / "HiHats" / f"hat_{i:03d}.wav", x * env)
+
+          for i in range(20):
+              t = np.linspace(0, 0.5, int(sr*0.5), False)
+              x = np.sin(2 * math.pi * (200 + (i % 5) * 30) * t) * 0.3
+              write(root / "misc" / f"tone_{i:03d}.wav", x)
+          PY
+
+      - name: Run extract benchmark
+        run: |
+          python scripts/profile_engine_extract.py \
+            --root benchmarks/_tmp_synth_corpus \
+            --limit 0 \
+            --progress-every 0 \
+            --benchmark-mode \
+            --json-out benchmarks/latest_engine_extract.json
+
+      - name: Upload benchmark result
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-extract-benchmark
+          path: benchmarks/latest_engine_extract.json
+          if-no-files-found: error

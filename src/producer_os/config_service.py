@@ -90,11 +90,13 @@ class ConfigService:
     config_filename: str = "config.json"
     styles_filename: str = "bucket_styles.json"
     buckets_filename: str = "buckets.json"
+    bucket_hints_filename: str = "bucket_hints.json"
     schema_dirname: str = "schemas"
-    schema_names: Tuple[str, str, str] = (
+    schema_names: Tuple[str, str, str, str] = (
         "config.schema.json",
         "styles.schema.json",
         "buckets.schema.json",
+        "bucket_hints.schema.json",
     )
     _cached_mode: Optional[bool] = field(default=None, init=False, repr=False)
 
@@ -138,8 +140,15 @@ class ConfigService:
     def get_buckets_path(self, cli_portable: bool = False) -> Path:
         return self.get_config_dir(cli_portable) / self.buckets_filename
 
+    def get_bucket_hints_path(self, cli_portable: bool = False) -> Path:
+        return self.get_config_dir(cli_portable) / self.bucket_hints_filename
+
     def get_schema_path(self, schema_name: str) -> Path:
-        return self.app_dir / self.schema_dirname / schema_name
+        primary = self.app_dir / self.schema_dirname / schema_name
+        if primary.exists():
+            return primary
+        # Source runs may point app_dir to <repo>/src, while schemas live in <repo>/src/producer_os/schemas.
+        return self.app_dir / "producer_os" / self.schema_dirname / schema_name
 
     def load_config(self, cli_portable: bool = False) -> Dict[str, Any]:
         """Load configuration from the resolved path, validating against schema."""
@@ -212,6 +221,44 @@ class ConfigService:
         if schema_path.exists():
             _validate_json(buckets, schema_path)
         _save_json(buckets, self.get_buckets_path(cli_portable))
+
+    # ------------------------------------------------------------------
+    # Classifier user hint keywords (additive only)
+    # ------------------------------------------------------------------
+    def load_bucket_hints(self, cli_portable: bool = False) -> Dict[str, Any]:
+        """Load additive filename/folder keyword hints used by classification."""
+        default: Dict[str, Any] = {"version": 1, "folder_keywords": {}, "filename_keywords": {}}
+        hints_path = self.get_bucket_hints_path(cli_portable)
+        data = _load_json(hints_path) or {}
+        if not isinstance(data, dict):
+            data = {}
+
+        merged: Dict[str, Any] = {
+            "version": int(data.get("version", 1) or 1),
+            "folder_keywords": dict(data.get("folder_keywords") or {}),
+            "filename_keywords": dict(data.get("filename_keywords") or {}),
+        }
+
+        schema_path = self.get_schema_path(self.schema_names[3])
+        if schema_path.exists():
+            try:
+                _validate_json(merged, schema_path)
+            except ValueError as exc:
+                print(f"Warning: {exc}. Ignoring invalid bucket hints.")
+                return default
+        return merged
+
+    def save_bucket_hints(self, hints: Dict[str, Any], cli_portable: bool = False) -> None:
+        """Persist additive classifier hint keywords."""
+        payload: Dict[str, Any] = {
+            "version": int((hints or {}).get("version", 1) or 1),
+            "folder_keywords": dict((hints or {}).get("folder_keywords") or {}),
+            "filename_keywords": dict((hints or {}).get("filename_keywords") or {}),
+        }
+        schema_path = self.get_schema_path(self.schema_names[3])
+        if schema_path.exists():
+            _validate_json(payload, schema_path)
+        _save_json(payload, self.get_bucket_hints_path(cli_portable))
 
     def is_portable_mode(self) -> bool:
         """Portable mode is enabled when portable.flag exists in app_dir."""

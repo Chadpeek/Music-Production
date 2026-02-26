@@ -10,6 +10,19 @@ Use the documents below for implementation details, troubleshooting, and release
 - `docs/CLASSIFICATION.md` - Hybrid WAV classifier behavior, confidence, reporting, and caching
 - `docs/TROUBLESHOOTING.md` - Common install/runtime issues and fixes
 - `docs/RELEASE_PROCESS.md` - CI/versioning/release workflow details
+- `docs/SYSTEM_REQUIREMENTS.md` - Runtime, hardware, and build requirements
+- `docs/CLI_REFERENCE.md` - CLI commands, flags, and benchmark usage
+- `docs/ARCHITECTURE.md` - Engine/UI/services architecture and data flow
+
+## Screenshots
+
+GUI:
+
+![Producer-OS GUI Screenshot](../assets/gui-screenshot.svg)
+
+CLI:
+
+![Producer-OS CLI Screenshot](../assets/cli-screenshot.svg)
 
 ## CLI Modes (Detailed Behavior)
 
@@ -23,6 +36,7 @@ The table below reflects current engine behavior.
 | `move` | Move files to hub with audit trail | Yes | Yes | Yes | Yes |
 | `repair-styles` | Repair/regenerate folder style files | Yes | Yes | No | Yes |
 | `undo-last-run` | Revert the most recent `move` | Reads latest audit | No | Yes (revert) | No |
+| `benchmark-classifier` | Read-only classifier audit + benchmark report | JSON benchmark report | Yes | No | No |
 
 Reserved/stub CLI commands:
 

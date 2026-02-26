@@ -1,0 +1,86 @@
+[
+  {
+    "id": "folder_hint_808",
+    "folder": "808s",
+    "filename": "01.wav",
+    "signal": {
+      "kind": "sine",
+      "duration": 0.5,
+      "freq": 55.0
+    },
+    "expected": {
+      "chosen_bucket": "808s",
+      "low_confidence": false,
+      "top3_buckets": ["808s", "Kicks", "Snares"],
+      "confidence_ratio_range": [0.99, 1.01],
+      "glide_detected": false
+    }
+  },
+  {
+    "id": "kick_override",
+    "folder": "808sFolder",
+    "filename": "kicktest.wav",
+    "signal": {
+      "kind": "kick",
+      "duration": 0.2,
+      "freq": 60.0
+    },
+    "expected": {
+      "chosen_bucket": "Kicks",
+      "low_confidence": true,
+      "top3_buckets": ["Kicks", "808s", "HiHats"],
+      "confidence_ratio_range": [0.65, 0.8],
+      "glide_detected": false
+    }
+  },
+  {
+    "id": "glide_808",
+    "folder": "pack",
+    "filename": "glide.wav",
+    "signal": {
+      "kind": "glide",
+      "duration": 0.5,
+      "f_start": 60.0,
+      "f_end": 50.0
+    },
+    "expected": {
+      "chosen_bucket": "808s",
+      "low_confidence": false,
+      "top3_buckets": ["808s", "Kicks", "Snares"],
+      "confidence_ratio_range": [0.99, 1.01],
+      "glide_detected": true
+    }
+  },
+  {
+    "id": "bright_hat",
+    "folder": "pack",
+    "filename": "hat_noise.wav",
+    "signal": {
+      "kind": "hat_noise",
+      "duration": 0.12
+    },
+    "expected": {
+      "chosen_bucket": "HiHats",
+      "low_confidence": true,
+      "top3_buckets": ["HiHats", "Cymbals", "Kicks"],
+      "confidence_ratio_range": [0.35, 0.6],
+      "glide_detected": false
+    }
+  },
+  {
+    "id": "ambiguous_mid_noise",
+    "folder": "pack",
+    "filename": "ambig.wav",
+    "signal": {
+      "kind": "ambiguous",
+      "duration": 0.35
+    },
+    "expected": {
+      "chosen_bucket": "808s",
+      "low_confidence": true,
+      "top3_buckets": ["808s", "HiHats", "Cymbals"],
+      "confidence_ratio_range": [0.3, 0.5],
+      "glide_detected": false
+    }
+  }
+]

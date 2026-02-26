@@ -1,0 +1,33 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-yaml
+      - id: check-json
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: python -m ruff check
+        language: system
+        pass_filenames: true
+        types_or: [python, pyi]
+
+      - id: ruff-format-check
+        name: ruff format --check
+        entry: python -m ruff format --check
+        language: system
+        pass_filenames: true
+        types_or: [python, pyi]
+
+# Optional local hook example (disabled by default):
+#   - repo: local
+#     hooks:
+#       - id: pytest-targeted
+#         name: pytest -q tests/test_engine.py tests/test_engine_rules.py
+#         entry: python -m pytest -q tests/test_engine.py tests/test_engine_rules.py
+#         language: system
+#         pass_filenames: false

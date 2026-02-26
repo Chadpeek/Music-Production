@@ -54,6 +54,15 @@ help us maintain a friendly and productive community.
   python -m mypy src/producer_os
   ```
 
+* **Pre-commit hooks (recommended)**: Install and enable the local hooks to
+  catch common formatting/lint issues before each commit:
+
+  ```bash
+  python -m pip install pre-commit
+  pre-commit install
+  pre-commit run --all-files
+  ```
+
 * **Sign your work**: Include a clear description of your changes in the
   commit messages and pull request. Explain why the change is needed.
 

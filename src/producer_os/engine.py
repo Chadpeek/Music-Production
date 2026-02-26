@@ -30,8 +30,11 @@ import json
 import os
 import re
 import shutil
+import time
+import threading
 import uuid
 import warnings
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple, TypedDict, TypeAlias
@@ -160,16 +163,44 @@ class ProducerOSEngine:
     _audio_backend_checked: bool = field(init=False, default=False)
     _fft_low_mask_cache: Dict[Tuple[int, int, float], Tuple[Any, Any]] = field(init=False, default_factory=dict)
     _tuning_loaded: bool = field(init=False, default=False)
+    _user_bucket_hints: Dict[str, Dict[str, List[str]]] = field(
+        init=False,
+        default_factory=lambda: {"folder_keywords": {}, "filename_keywords": {}},
+    )
+    _feature_cache_stats: Dict[str, Any] = field(init=False, default_factory=dict)
+    _feature_cache_lock: Any = field(init=False, default_factory=threading.Lock, repr=False)
     current_mode: str = field(init=False, default="analyze")
 
     def __post_init__(self) -> None:
         self.inbox_dir = Path(self.inbox_dir)
         self.hub_dir = Path(self.hub_dir)
+        self._reset_feature_cache_stats()
         self._load_tuning_overrides()
+        self._load_user_bucket_hints()
         self._load_feature_cache()
 
     # ------------------------------------------------------------------
     # Tuning overrides and feature caching
+    def _reset_feature_cache_stats(self) -> None:
+        self._feature_cache_stats = {
+            "hits": 0,
+            "misses": 0,
+            "reused": 0,
+            "computed": 0,
+            "saved_entries": 0,
+            "persisted": False,
+        }
+
+    def _feature_cache_stats_snapshot(self) -> Dict[str, Any]:
+        return {
+            "hits": int(self._feature_cache_stats.get("hits", 0) or 0),
+            "misses": int(self._feature_cache_stats.get("misses", 0) or 0),
+            "reused": int(self._feature_cache_stats.get("reused", 0) or 0),
+            "computed": int(self._feature_cache_stats.get("computed", 0) or 0),
+            "saved_entries": int(self._feature_cache_stats.get("saved_entries", 0) or 0),
+            "persisted": bool(self._feature_cache_stats.get("persisted", False)),
+        }
+
     def _load_tuning_overrides(self) -> None:
         """Load overrides from tuning.json (config dir first, then hub dir)."""
         if self._tuning_loaded:
@@ -203,6 +234,87 @@ class ProducerOSEngine:
             except Exception:
                 continue
 
+    def _load_user_bucket_hints(self) -> None:
+        """Load additive user hint keywords from config/hub locations (best-effort)."""
+        self._user_bucket_hints = {"folder_keywords": {}, "filename_keywords": {}}
+        candidates: List[Path] = []
+        cfg = self.config if isinstance(self.config, dict) else {}
+
+        config_dir_value = cfg.get("config_dir")
+        if config_dir_value:
+            candidates.append(Path(str(config_dir_value)) / "bucket_hints.json")
+        hints_path_value = cfg.get("bucket_hints_path")
+        if hints_path_value:
+            p = Path(str(hints_path_value))
+            candidates.append(p if p.suffix.lower() == ".json" else (p / "bucket_hints.json"))
+        inline_hints = cfg.get("bucket_hints")
+        if isinstance(inline_hints, dict):
+            self._user_bucket_hints = self._normalize_bucket_hints(inline_hints)
+            return
+
+        candidates.append(self.hub_dir / "config" / "bucket_hints.json")
+        candidates.append(self.hub_dir / "bucket_hints.json")
+
+        for path in candidates:
+            try:
+                if not path.exists():
+                    continue
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(payload, dict):
+                    self._user_bucket_hints = self._normalize_bucket_hints(payload)
+                    return
+            except Exception:
+                continue
+
+    def _normalize_bucket_hints(self, payload: Dict[str, Any]) -> Dict[str, Dict[str, List[str]]]:
+        """Normalize additive bucket hints and ignore unknown bucket IDs."""
+        normalized: Dict[str, Dict[str, List[str]]] = {
+            "folder_keywords": {},
+            "filename_keywords": {},
+        }
+        for kind in ("folder_keywords", "filename_keywords"):
+            raw_map = payload.get(kind, {})
+            if not isinstance(raw_map, dict):
+                continue
+            for bucket, values in raw_map.items():
+                if bucket not in self.BUCKET_RULES:
+                    continue
+                if not isinstance(values, list):
+                    continue
+                seen: set[str] = set()
+                out: List[str] = []
+                for value in values:
+                    if not isinstance(value, str):
+                        continue
+                    token = value.strip().lower()
+                    if not token or token in seen:
+                        continue
+                    seen.add(token)
+                    out.append(token)
+                if out:
+                    normalized[kind][bucket] = out
+        return normalized
+
+    def _iter_bucket_patterns(self, bucket: str, kind: str) -> List[str]:
+        """Return canonical + additive user patterns for a bucket/kind."""
+        base = list(self.BUCKET_RULES.get(bucket, []))
+        hint_map = self._user_bucket_hints.get(kind, {}) if isinstance(self._user_bucket_hints, dict) else {}
+        extras = hint_map.get(bucket, []) if isinstance(hint_map, dict) else []
+        if not extras:
+            return base
+        merged: List[str] = []
+        seen: set[str] = set()
+        for pat in [*base, *extras]:
+            p = str(pat).strip()
+            if not p:
+                continue
+            key = p.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(p)
+        return merged
+
     def _load_feature_cache(self) -> None:
         cache_path = self.hub_dir / "feature_cache.json"
         self._feature_cache = {}
@@ -218,7 +330,11 @@ class ProducerOSEngine:
         cache_path = self.hub_dir / "feature_cache.json"
         try:
             cache_path.parent.mkdir(parents=True, exist_ok=True)
-            cache_path.write_text(json.dumps(self._feature_cache), encoding="utf-8")
+            with self._feature_cache_lock:
+                cache_snapshot = dict(self._feature_cache)
+            cache_path.write_text(json.dumps(cache_snapshot), encoding="utf-8")
+            self._feature_cache_stats["saved_entries"] = int(len(cache_snapshot))
+            self._feature_cache_stats["persisted"] = True
         except Exception:
             pass
 
@@ -297,6 +413,40 @@ class ProducerOSEngine:
                 packs.append(p)
         return sorted(packs)
 
+    def _collect_pack_wavs(self, pack_dir: Path) -> Tuple[List[Tuple[Path, Path]], int]:
+        """Collect WAV files for a pack in deterministic order and count skipped non-WAV files."""
+        wavs: List[Tuple[Path, Path]] = []
+        skipped_non_wav = 0
+        for root, dirs, files in os.walk(pack_dir):
+            dirs[:] = sorted([d for d in dirs if not self._should_ignore(d)])
+            files = sorted([f for f in files if not self._should_ignore(f)])
+            for fname in files:
+                file_path = Path(root) / fname
+                if not file_path.is_file():
+                    continue
+                if file_path.suffix.lower() != ".wav":
+                    skipped_non_wav += 1
+                    continue
+                wavs.append((file_path, file_path.relative_to(pack_dir)))
+        return wavs, skipped_non_wav
+
+    def _classify_files_batch(
+        self,
+        file_paths: List[Path],
+        workers: int = 1,
+    ) -> List[Tuple[Optional[str], str, float, List[Tuple[str, float]], bool, Dict[str, Any]]]:
+        """Classify a batch of files, preserving input order. Parallel when enabled and requested."""
+        worker_count = max(1, int(workers))
+        if (
+            worker_count <= 1
+            or not bool(getattr(tuning, "PARALLEL_EXTRACTION_ENABLED", False))
+            or len(file_paths) <= 1
+        ):
+            return [self._classify_file(p) for p in file_paths]
+
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            return list(executor.map(self._classify_file, file_paths))
+
     # ------------------------------------------------------------------
     # Scoring helpers
     def _hint_tokens(self, text: str) -> List[str]:
@@ -333,15 +483,17 @@ class ProducerOSEngine:
             part_lower = part.lower()
             tokens = self._hint_tokens(part)
             for bucket, patterns in self.BUCKET_RULES.items():
-                for pat in patterns:
+                for pat in self._iter_bucket_patterns(bucket, "folder_keywords"):
                     if self._pattern_matches_text(pat, part_lower, tokens):
                         previous = scores[bucket]
                         scores[bucket] = min(scores[bucket] + tuning.FOLDER_HINT_WEIGHT, tuning.FOLDER_HINT_CAP)
                         if scores[bucket] > previous:
+                            is_user_hint = pat.lower() not in {p.lower() for p in patterns}
                             matches.append(
                                 {
                                     "bucket": bucket,
                                     "keyword": pat,
+                                    "source": "user_hint" if is_user_hint else "default_rule",
                                     "folder": part,
                                     "added": scores[bucket] - previous,
                                     "score_after": scores[bucket],
@@ -359,17 +511,19 @@ class ProducerOSEngine:
         lower_name = filename.lower()
         tokens = self._hint_tokens(Path(filename).stem)
         for bucket, patterns in self.BUCKET_RULES.items():
-            for pat in patterns:
+            for pat in self._iter_bucket_patterns(bucket, "filename_keywords"):
                 if pat == ".mid":
                     continue
                 if self._pattern_matches_text(pat, lower_name, tokens):
                     previous = scores[bucket]
                     scores[bucket] = min(scores[bucket] + tuning.FILENAME_HINT_WEIGHT, tuning.FILENAME_HINT_CAP)
                     if scores[bucket] > previous:
+                        is_user_hint = pat.lower() not in {p.lower() for p in patterns}
                         matches.append(
                             {
                                 "bucket": bucket,
                                 "keyword": pat,
+                                "source": "user_hint" if is_user_hint else "default_rule",
                                 "filename": filename,
                                 "added": scores[bucket] - previous,
                                 "score_after": scores[bucket],
@@ -380,6 +534,42 @@ class ProducerOSEngine:
     def _get_filename_hint_scores(self, filename: str) -> Dict[str, int]:
         scores, _matches = self._get_filename_hint_details(filename)
         return scores
+
+    def _pitch_skip_reason(self, features: Dict[str, Any]) -> str:
+        """Return a deterministic pitch skip reason for clearly percussive samples, else ''."""
+        if not bool(getattr(tuning, "PITCH_GATING_ENABLED", False)):
+            return ""
+        thr = getattr(tuning, "PITCH_GATING_THRESHOLDS", {}) or {}
+        duration = float(features.get("duration", 0.0) or 0.0)
+        transient = float(features.get("transient_strength", 0.0) or 0.0)
+        centroid_mean = float(features.get("centroid_mean", 0.0) or 0.0)
+        low_ratio = float(features.get("low_freq_ratio", 0.0) or 0.0)
+        zcr_mean = float(features.get("zcr_mean", 0.0) or 0.0)
+        flatness_mean = float(features.get("flatness_mean", 0.0) or 0.0)
+        rms_global = float(features.get("rms_global", 0.0) or 0.0)
+
+        if rms_global <= 0.0:
+            return "silence_or_zero_signal"
+
+        hat_like = (
+            duration <= float(thr.get("hat_duration_max", 0.22))
+            and centroid_mean >= float(thr.get("hat_centroid_min", 5000.0))
+            and low_ratio <= float(thr.get("hat_lowfreq_max", 0.12))
+            and flatness_mean >= float(thr.get("hat_flatness_min", 0.40))
+            and zcr_mean >= float(thr.get("hat_zcr_min", 0.12))
+        )
+        if hat_like:
+            return "hat_like_percussive"
+
+        kick_like = (
+            duration <= float(thr.get("kick_duration_max", 0.22))
+            and transient >= float(thr.get("kick_transient_min", 4.5))
+            and centroid_mean >= float(thr.get("kick_centroid_min", 800.0))
+        )
+        if kick_like:
+            return "kick_like_percussive"
+
+        return ""
 
     # ------------------------------------------------------------------
     # Audio feature extraction (optional dependencies)
@@ -395,10 +585,14 @@ class ProducerOSEngine:
         except Exception:
             key = str(file_path.resolve() if isinstance(file_path, Path) else file_path)
 
-        if key in self._feature_cache:
-            cached = self._feature_cache.get(key)
-            if isinstance(cached, dict):
-                return cached
+        with self._feature_cache_lock:
+            if key in self._feature_cache:
+                cached = self._feature_cache.get(key)
+                if isinstance(cached, dict):
+                    self._feature_cache_stats["hits"] = int(self._feature_cache_stats.get("hits", 0)) + 1
+                    self._feature_cache_stats["reused"] = int(self._feature_cache_stats.get("reused", 0)) + 1
+                    return cached
+            self._feature_cache_stats["misses"] = int(self._feature_cache_stats.get("misses", 0)) + 1
 
         # Default zeroed features
         features: Dict[str, Any] = {
@@ -419,6 +613,9 @@ class ProducerOSEngine:
             "zcr_mean": 0.0,
             "flatness_mean": 0.0,
             "pitch_available": False,
+            "pitch_skipped": False,
+            "pitch_skip_reason": "",
+            "pitch_gate_features": {},
             "f0_frames": 0,
             "voiced_frames": 0,
             "voiced_ratio": 0.0,
@@ -432,7 +629,9 @@ class ProducerOSEngine:
 
         backend = self._get_audio_backend()
         if backend is None:
-            self._feature_cache[key] = features
+            with self._feature_cache_lock:
+                self._feature_cache[key] = features
+                self._feature_cache_stats["computed"] = int(self._feature_cache_stats.get("computed", 0)) + 1
             return features
         np = backend["np"]
         sf = backend["sf"]
@@ -531,8 +730,22 @@ class ProducerOSEngine:
                 flatness = np.array([], dtype=np.float32)
             features["flatness_mean"] = float(np.mean(flatness)) if flatness.size > 0 else 0.0
 
-            # Pitch (yin)
+            # Pitch (yin) with deterministic gating for clearly percussive samples
             try:
+                pitch_skip_reason = self._pitch_skip_reason(features)
+                features["pitch_gate_features"] = {
+                    "duration": float(features.get("duration", 0.0) or 0.0),
+                    "transient_strength": float(features.get("transient_strength", 0.0) or 0.0),
+                    "centroid_mean": float(features.get("centroid_mean", 0.0) or 0.0),
+                    "low_freq_ratio": float(features.get("low_freq_ratio", 0.0) or 0.0),
+                    "zcr_mean": float(features.get("zcr_mean", 0.0) or 0.0),
+                    "flatness_mean": float(features.get("flatness_mean", 0.0) or 0.0),
+                }
+                if pitch_skip_reason:
+                    features["pitch_available"] = False
+                    features["pitch_skipped"] = True
+                    features["pitch_skip_reason"] = str(pitch_skip_reason)
+                    raise ValueError(f"Pitch analysis skipped: {pitch_skip_reason}")
                 yin_frame_length = max(int(win), int(tuning.PITCH_ANALYSIS_PARAMS["yin_frame_length_min"]))
                 if n < yin_frame_length:
                     raise ValueError("Signal too short for YIN frame length")
@@ -572,7 +785,9 @@ class ProducerOSEngine:
             # Keep zeroed features on failure
             pass
 
-        self._feature_cache[key] = features
+        with self._feature_cache_lock:
+            self._feature_cache[key] = features
+            self._feature_cache_stats["computed"] = int(self._feature_cache_stats.get("computed", 0)) + 1
         return features
 
     def _detect_glide(self, f0, sr: int, win: int, hop: int) -> Dict[str, Any]:
@@ -1026,6 +1241,9 @@ class ProducerOSEngine:
         }
         reason["pitch_summary"] = {
             "pitch_available": features.get("pitch_available"),
+            "pitch_skipped": features.get("pitch_skipped", False),
+            "pitch_skip_reason": features.get("pitch_skip_reason", ""),
+            "pitch_gate_features": dict(features.get("pitch_gate_features", {}) or {}),
             "f0_frames": features.get("f0_frames"),
             "voiced_frames": features.get("voiced_frames"),
             "median_f0": features.get("median_f0"),
@@ -1192,6 +1410,18 @@ class ProducerOSEngine:
         """
         mode = (mode or "analyze").lower().strip()
         self.current_mode = mode
+        self._reset_feature_cache_stats()
+        developer_options = developer_options or {}
+        worker_count = max(
+            1,
+            int(
+                developer_options.get(
+                    "workers",
+                    getattr(tuning, "PARALLEL_WORKERS_DEFAULT", 1),
+                )
+                or 1
+            ),
+        )
 
         write_hub = mode in {"copy", "move", "repair-styles"}  # .nfo + cache allowed
         write_logs = mode in {"dry-run", "copy", "move", "repair-styles"}  # analyze must not log
@@ -1207,8 +1437,11 @@ class ProducerOSEngine:
             "files_copied": 0,
             "skipped_existing": 0,
             "failed": 0,
+            "files_skipped_non_wav": 0,
             "unsorted": 0,
             "packs": [],
+            "feature_cache_stats": self._feature_cache_stats_snapshot(),
+            "workers": worker_count,
         }
 
         # ANALYZE: absolutely no filesystem writes
@@ -1219,48 +1452,38 @@ class ProducerOSEngine:
                     "pack": pack_dir.name,
                     "files": [],
                 }
+                wav_items, skipped_non_wav = self._collect_pack_wavs(pack_dir)
+                report["files_skipped_non_wav"] += skipped_non_wav
+                results = self._classify_files_batch([p for p, _ in wav_items], workers=worker_count)
+                for (file_path, rel_path), (bucket, category, confidence, candidates, low_confidence, reason_dict) in zip(
+                    wav_items, results
+                ):
+                    if bucket is None:
+                        dest_path = self.hub_dir / "UNSORTED" / pack_dir.name / rel_path
+                        report["unsorted"] += 1
+                        reason = self._format_reason_text(bucket, confidence, candidates, low_confidence)
+                    else:
+                        display_bucket = self.bucket_service.get_display_name(bucket)
+                        dest_path = self.hub_dir / category / display_bucket / pack_dir.name / rel_path
+                        reason = self._format_reason_text(bucket, confidence, candidates, low_confidence)
 
-                for root, dirs, files in os.walk(pack_dir):
-                    dirs[:] = [d for d in dirs if not self._should_ignore(d)]
-                    files = [f for f in files if not self._should_ignore(f)]
-
-                    for fname in files:
-                        file_path = Path(root) / fname
-                        if not file_path.is_file():
-                            continue
-                        if file_path.suffix.lower() != ".wav":
-                            continue
-
-                        bucket, category, confidence, candidates, low_confidence, reason_dict = self._classify_file(
-                            file_path
+                    pack_report["files"].append(
+                        self._build_pack_file_entry(
+                            source=file_path,
+                            dest=dest_path,
+                            bucket=bucket,
+                            category=category,
+                            confidence=confidence,
+                            action="NONE",
+                            reason_text=reason,
+                            reason_dict=reason_dict,
                         )
-                        rel_path = file_path.relative_to(pack_dir)
-
-                        if bucket is None:
-                            dest_path = self.hub_dir / "UNSORTED" / pack_dir.name / rel_path
-                            report["unsorted"] += 1
-                            reason = self._format_reason_text(bucket, confidence, candidates, low_confidence)
-                        else:
-                            display_bucket = self.bucket_service.get_display_name(bucket)
-                            dest_path = self.hub_dir / category / display_bucket / pack_dir.name / rel_path
-                            reason = self._format_reason_text(bucket, confidence, candidates, low_confidence)
-
-                        pack_report["files"].append(
-                            self._build_pack_file_entry(
-                                source=file_path,
-                                dest=dest_path,
-                                bucket=bucket,
-                                category=category,
-                                confidence=confidence,
-                                action="NONE",
-                                reason_text=reason,
-                                reason_dict=reason_dict,
-                            )
-                        )
-                        report["files_processed"] += 1
+                    )
+                    report["files_processed"] += 1
 
                 report["packs"].append(pack_report)
 
+            report["feature_cache_stats"] = self._feature_cache_stats_snapshot()
             return report
 
         # For modes other than analyze, we can write logs/reports
@@ -1283,10 +1506,12 @@ class ProducerOSEngine:
         if mode == "repair-styles":
             actions = self.repair_styles()
             report["repair_actions"] = actions
+            report["feature_cache_stats"] = self._feature_cache_stats_snapshot()
             if write_logs and report_path:
                 report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
             if write_hub:
                 self._save_feature_cache()
+                report["feature_cache_stats"] = self._feature_cache_stats_snapshot()
             return report
 
         packs = self._discover_packs()
@@ -1320,87 +1545,76 @@ class ProducerOSEngine:
                 }
 
                 _log(f"Processing pack: {pack_dir.name}")
+                wav_items, skipped_non_wav = self._collect_pack_wavs(pack_dir)
+                report["files_skipped_non_wav"] += skipped_non_wav
+                results = self._classify_files_batch([p for p, _ in wav_items], workers=worker_count)
 
-                for root, dirs, files in os.walk(pack_dir):
-                    dirs[:] = [d for d in dirs if not self._should_ignore(d)]
-                    files = [f for f in files if not self._should_ignore(f)]
-
-                    for fname in files:
-                        file_path = Path(root) / fname
-                        if not file_path.is_file():
-                            continue
-                        if file_path.suffix.lower() != ".wav":
-                            continue
-
-                        rel_path = file_path.relative_to(pack_dir)
-                        bucket, category, confidence, candidates, low_confidence, reason_dict = self._classify_file(
-                            file_path
+                for (file_path, rel_path), (bucket, category, confidence, candidates, low_confidence, reason_dict) in zip(
+                    wav_items, results
+                ):
+                    if bucket is None:
+                        dest_dir = (
+                            self._ensure_unsorted_structure(pack_dir.name)
+                            if write_hub
+                            else (self.hub_dir / "UNSORTED" / pack_dir.name)
                         )
-
-                        if bucket is None:
-                            dest_dir = (
-                                self._ensure_unsorted_structure(pack_dir.name)
-                                if write_hub
-                                else (self.hub_dir / "UNSORTED" / pack_dir.name)
-                            )
-                            dest_path = dest_dir / rel_path
-                            report["unsorted"] += 1
-                            reason = self._format_reason_text(bucket, confidence, candidates, low_confidence)
+                        dest_path = dest_dir / rel_path
+                        report["unsorted"] += 1
+                        reason = self._format_reason_text(bucket, confidence, candidates, low_confidence)
+                    else:
+                        display_bucket = self.bucket_service.get_display_name(bucket)
+                        if write_hub:
+                            _, _, pack_dest_dir = self._ensure_hub_structure(category, bucket, pack_dir.name)
                         else:
-                            display_bucket = self.bucket_service.get_display_name(bucket)
-                            if write_hub:
-                                _, _, pack_dest_dir = self._ensure_hub_structure(category, bucket, pack_dir.name)
+                            pack_dest_dir = self.hub_dir / category / display_bucket / pack_dir.name
+                        dest_path = pack_dest_dir / rel_path
+                        reason = self._format_reason_text(bucket, confidence, candidates, low_confidence)
+
+                    action = "NONE"
+                    if do_transfer:
+                        try:
+                            if dest_path.exists():
+                                action = "SKIPPED"
+                                report["skipped_existing"] += 1
+                                reason += "; destination exists"
                             else:
-                                pack_dest_dir = self.hub_dir / category / display_bucket / pack_dir.name
-                            dest_path = pack_dest_dir / rel_path
-
-                            reason = self._format_reason_text(bucket, confidence, candidates, low_confidence)
-
-                        action = "NONE"
-                        if do_transfer:
-                            try:
-                                if dest_path.exists():
-                                    action = "SKIPPED"
-                                    report["skipped_existing"] += 1
-                                    reason += "; destination exists"
+                                self._move_or_copy(file_path, dest_path, mode)
+                                action = mode.upper()
+                                if mode == "move":
+                                    report["files_moved"] += 1
                                 else:
-                                    self._move_or_copy(file_path, dest_path, mode)
-                                    action = mode.upper()
-                                    if mode == "move":
-                                        report["files_moved"] += 1
-                                    else:
-                                        report["files_copied"] += 1
-                            except Exception as e:
-                                action = "FAILED"
-                                report["failed"] += 1
-                                reason += f"; move/copy failed: {e}"
+                                    report["files_copied"] += 1
+                        except Exception as e:
+                            action = "FAILED"
+                            report["failed"] += 1
+                            reason += f"; move/copy failed: {e}"
 
-                        transfer_pack_report["files"].append(
-                            self._build_pack_file_entry(
-                                source=file_path,
-                                dest=dest_path,
-                                bucket=bucket,
-                                category=category,
-                                confidence=confidence,
-                                action=action,
-                                reason_text=reason,
-                                reason_dict=reason_dict,
-                            )
+                    transfer_pack_report["files"].append(
+                        self._build_pack_file_entry(
+                            source=file_path,
+                            dest=dest_path,
+                            bucket=bucket,
+                            category=category,
+                            confidence=confidence,
+                            action=action,
+                            reason_text=reason,
+                            reason_dict=reason_dict,
                         )
-                        report["files_processed"] += 1
+                    )
+                    report["files_processed"] += 1
 
-                        if audit_writer:
-                            audit_writer.writerow(
-                                [
-                                    str(file_path),
-                                    pack_dir.name,
-                                    category,
-                                    bucket or "UNSORTED",
-                                    f"{confidence:.2f}",
-                                    action,
-                                    reason,
-                                ]
-                            )
+                    if audit_writer:
+                        audit_writer.writerow(
+                            [
+                                str(file_path),
+                                pack_dir.name,
+                                category,
+                                bucket or "UNSORTED",
+                                f"{confidence:.2f}",
+                                action,
+                                reason,
+                            ]
+                        )
 
                 _log(f"Finished pack: {pack_dir.name} files={len(transfer_pack_report['files'])}")
 
@@ -1419,12 +1633,176 @@ class ProducerOSEngine:
             if log_handle:
                 log_handle.close()
         if write_logs and report_path:
+            report["feature_cache_stats"] = self._feature_cache_stats_snapshot()
             report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
 
         if write_hub:
             self._save_feature_cache()
+            report["feature_cache_stats"] = self._feature_cache_stats_snapshot()
+        else:
+            report["feature_cache_stats"] = self._feature_cache_stats_snapshot()
 
         return report
+
+    # ------------------------------------------------------------------
+    # Benchmark / audit reporting (read-only classification analysis)
+    def build_benchmark_report(
+        self,
+        report: Dict[str, Any],
+        *,
+        top_confusions: int = 20,
+        max_files: Optional[int] = None,
+        runtime_seconds: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """Build a classifier benchmark/audit report from a run report."""
+        entries: List[Dict[str, Any]] = []
+        for pack in report.get("packs", []):
+            pack_name = str(pack.get("pack", ""))
+            for file_entry in pack.get("files", []) or []:
+                if not isinstance(file_entry, dict):
+                    continue
+                row = dict(file_entry)
+                row["_pack"] = pack_name
+                entries.append(row)
+
+        if max_files is not None and max_files >= 0:
+            entries = entries[: max_files]
+
+        total = len(entries)
+        low_conf_entries = [e for e in entries if bool(e.get("low_confidence", False))]
+
+        bucket_counts: Dict[str, int] = {}
+        low_conf_bucket_counts: Dict[str, int] = {}
+        confusion_counts: Dict[Tuple[str, str], int] = {}
+        misfits: List[Dict[str, Any]] = []
+
+        for entry in entries:
+            chosen = str(entry.get("chosen_bucket") or entry.get("bucket") or "UNSORTED")
+            bucket_counts[chosen] = bucket_counts.get(chosen, 0) + 1
+            if bool(entry.get("low_confidence", False)):
+                low_conf_bucket_counts[chosen] = low_conf_bucket_counts.get(chosen, 0) + 1
+
+            top3 = entry.get("top_3_candidates") or entry.get("top_candidates") or []
+            runner_up = None
+            if isinstance(top3, list):
+                valid_top = [c for c in top3 if isinstance(c, dict) and c.get("bucket") is not None]
+                if len(valid_top) >= 2:
+                    runner_up = str(valid_top[1].get("bucket"))
+                if bool(entry.get("low_confidence", False)):
+                    misfits.append(
+                        {
+                            "pack": entry.get("_pack", ""),
+                            "source": str(entry.get("source", "")),
+                            "chosen_bucket": chosen,
+                            "top_3_candidates": [
+                                {"bucket": str(c.get("bucket")), "score": float(c.get("score", 0.0) or 0.0)}
+                                for c in valid_top[:3]
+                            ],
+                            "confidence_ratio": float(entry.get("confidence_ratio", 0.0) or 0.0),
+                            "confidence_margin": float(entry.get("confidence_margin", 0.0) or 0.0),
+                            "low_confidence": bool(entry.get("low_confidence", False)),
+                        }
+                    )
+            if runner_up:
+                pair = (chosen, runner_up)
+                confusion_counts[pair] = confusion_counts.get(pair, 0) + 1
+
+        bucket_distribution = []
+        for bucket, count in sorted(bucket_counts.items(), key=lambda kv: (-kv[1], kv[0])):
+            bucket_distribution.append(
+                {
+                    "bucket": bucket,
+                    "count": int(count),
+                    "percent": round((float(count) / float(total) * 100.0) if total else 0.0, 4),
+                }
+            )
+
+        low_conf_by_bucket = []
+        for bucket, count in sorted(bucket_counts.items(), key=lambda kv: (-kv[1], kv[0])):
+            low_count = int(low_conf_bucket_counts.get(bucket, 0))
+            low_conf_by_bucket.append(
+                {
+                    "bucket": bucket,
+                    "count": low_count,
+                    "rate": round((float(low_count) / float(count)) if count else 0.0, 4),
+                }
+            )
+
+        confusion_pairs = [
+            {"chosen": chosen, "runner_up": runner_up, "count": int(count)}
+            for (chosen, runner_up), count in sorted(
+                confusion_counts.items(),
+                key=lambda kv: (-kv[1], kv[0][0], kv[0][1]),
+            )[: max(1, int(top_confusions))]
+        ]
+
+        misfits_sorted = sorted(
+            misfits,
+            key=lambda e: (
+                float(e.get("confidence_ratio", 1.0)),
+                float(e.get("confidence_margin", 9999.0)),
+                str(e.get("source", "")),
+            ),
+        )
+
+        benchmark: Dict[str, Any] = {
+            "version": 1,
+            "timestamp": datetime.datetime.now().isoformat(),
+            "inbox": str(self.inbox_dir.resolve()),
+            "hub": str(self.hub_dir.resolve()),
+            "files_classified": int(total),
+            "files_skipped_non_wav": int(report.get("files_skipped_non_wav", 0) or 0),
+            "errors": int(report.get("failed", 0) or 0),
+            "runtime_seconds": round(float(runtime_seconds or 0.0), 6),
+            "low_confidence": {
+                "count": int(len(low_conf_entries)),
+                "rate": round((float(len(low_conf_entries)) / float(total)) if total else 0.0, 6),
+            },
+            "bucket_distribution": bucket_distribution,
+            "low_confidence_by_bucket": low_conf_by_bucket,
+            "confusion_pairs": confusion_pairs,
+            "representative_misfits": misfits_sorted[: max(10, min(100, int(top_confusions) * 2))],
+            "feature_cache_stats": dict(report.get("feature_cache_stats") or self._feature_cache_stats_snapshot()),
+            "tuning_snapshot": {
+                "folder_hint_weight": int(tuning.FOLDER_HINT_WEIGHT),
+                "filename_hint_weight": int(tuning.FILENAME_HINT_WEIGHT),
+                "low_confidence_threshold": float(tuning.LOW_CONFIDENCE_THRESHOLD),
+            },
+        }
+        return benchmark
+
+    def run_benchmark(
+        self,
+        *,
+        output_path: Optional[Path] = None,
+        top_confusions: int = 20,
+        max_files: Optional[int] = None,
+        workers: int = 1,
+        save_feature_cache: bool = True,
+    ) -> Dict[str, Any]:
+        """Run a read-only recursive classification benchmark and write a JSON report."""
+        # workers is accepted for forward compatibility (Phase 2 parallel extraction)
+        worker_count = max(1, int(workers))
+
+        started = time.perf_counter()
+        analyze_report = self.run(mode="analyze", developer_options={"workers": worker_count})
+        benchmark = self.build_benchmark_report(
+            analyze_report,
+            top_confusions=top_confusions,
+            max_files=max_files,
+            runtime_seconds=(time.perf_counter() - started),
+        )
+
+        if save_feature_cache:
+            self._save_feature_cache()
+            benchmark["feature_cache_stats"] = self._feature_cache_stats_snapshot()
+
+        if output_path is not None:
+            out = Path(output_path)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(json.dumps(benchmark, indent=2), encoding="utf-8")
+
+        return benchmark
 
     def undo_last_run(self) -> Dict[str, Any]:
         """Undo the most recent MOVE run using its audit.csv.

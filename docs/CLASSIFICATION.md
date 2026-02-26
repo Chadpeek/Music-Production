@@ -106,6 +106,13 @@ Extracted audio features are cached in:
 The cache is used to avoid re-analyzing unchanged files.
 The cache key includes file identity metadata (path/size/mtime) to keep reuse deterministic.
 
+Run reports and benchmark reports also include `feature_cache_stats` (hits/misses/reused/computed/persisted).
+
+Compatibility note:
+
+- The current cache file remains a plain key->feature map for backward compatibility.
+- Cache metadata/versioning is tracked in reports/docs rather than changing the on-disk cache format (for now).
+
 ## Idempotency and Safety
 
 - The engine avoids duplicate destination naming spam by skipping existing destinations
@@ -121,3 +128,11 @@ Classifier weights and thresholds are centralized in:
 
 Optional overrides can be loaded from a `tuning.json` file (when present and valid).
 Malformed override files fail gracefully.
+
+## User Hint Overrides
+
+Producer-OS also supports additive user hint keywords via:
+
+- `bucket_hints.json`
+
+These hints extend (but do not replace) the built-in bucket keyword vocabulary and are logged in reasoning fields as `source: "user_hint"`.

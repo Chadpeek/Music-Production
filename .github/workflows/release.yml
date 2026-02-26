@@ -20,6 +20,11 @@ concurrency:
 
 env:
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  WINDOWS_SIGN_ENABLE: ${{ secrets.WINDOWS_SIGN_ENABLE }}
+  WINDOWS_SIGN_CERT_B64: ${{ secrets.WINDOWS_SIGN_CERT_B64 }}
+  WINDOWS_SIGN_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGN_CERT_PASSWORD }}
+  WINDOWS_SIGN_TIMESTAMP_URL: ${{ secrets.WINDOWS_SIGN_TIMESTAMP_URL }}
+  WINDOWS_SIGNTOOL_PATH: ${{ secrets.WINDOWS_SIGNTOOL_PATH }}
 
 jobs:
   build:
@@ -93,6 +98,12 @@ jobs:
         with:
           path: build/installer/ProducerOS.iss
           options: /DMyAppVersion=${{ steps.release_meta.outputs.version }}
+
+      - name: Sign installer (optional)
+        shell: pwsh
+        run: |
+          $installer = "dist\ProducerOS-Setup-${{ steps.release_meta.outputs.version }}.exe"
+          & ".github\scripts\sign_windows_artifacts.ps1" -Paths @($installer)
 
       - name: Verify artifacts exist
         shell: pwsh

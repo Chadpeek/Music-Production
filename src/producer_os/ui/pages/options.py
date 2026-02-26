@@ -25,8 +25,11 @@ class OptionsPage(BaseWizardPage):
     themeChanged = Signal(str)
     developerToolsChanged = Signal(bool)
     openConfigRequested = Signal()
+    openLogsRequested = Signal()
     openLastReportRequested = Signal()
     validateSchemasRequested = Signal()
+    verifyAudioDependenciesRequested = Signal()
+    qtPluginCheckRequested = Signal()
 
     def __init__(
         self,
@@ -114,6 +117,50 @@ class OptionsPage(BaseWizardPage):
         self.dev_tools_panel = AnimatedPanel(dev_buttons_host, expanded=developer_tools)
         dev_card.body_layout.addWidget(self.dev_tools_panel)
 
+        troubleshoot_card = self.add_card("Troubleshooting", "Quick diagnostics and support actions for runtime issues.")
+        actions_host = QWidget()
+        actions_layout = QVBoxLayout(actions_host)
+        actions_layout.setContentsMargins(0, 0, 0, 0)
+        actions_layout.setSpacing(8)
+
+        self.tr_open_config_btn = QPushButton("Open config folder")
+        self.tr_open_logs_btn = QPushButton("Open logs folder")
+        self.tr_open_last_report_btn = QPushButton("Open last report")
+        self.verify_audio_deps_btn = QPushButton("Verify audio dependencies")
+        self.qt_plugin_check_btn = QPushButton("Qt plugin check")
+        for btn in (
+            self.tr_open_config_btn,
+            self.tr_open_logs_btn,
+            self.tr_open_last_report_btn,
+            self.verify_audio_deps_btn,
+            self.qt_plugin_check_btn,
+        ):
+            set_widget_role(btn, "ghost")
+            actions_layout.addWidget(btn)
+
+        self.tr_open_config_btn.clicked.connect(self.openConfigRequested.emit)
+        self.tr_open_logs_btn.clicked.connect(self.openLogsRequested.emit)
+        self.tr_open_last_report_btn.clicked.connect(self.openLastReportRequested.emit)
+        self.verify_audio_deps_btn.clicked.connect(self.verifyAudioDependenciesRequested.emit)
+        self.qt_plugin_check_btn.clicked.connect(self.qtPluginCheckRequested.emit)
+
+        troubleshoot_card.body_layout.addWidget(actions_host)
+
+        self.portable_mode_label = QLabel("Portable mode: unknown")
+        self.portable_mode_label.setObjectName("FieldHint")
+        self.portable_mode_label.setWordWrap(True)
+        troubleshoot_card.body_layout.addWidget(self.portable_mode_label)
+
+        self.audio_deps_status_label = QLabel("Audio dependencies: not checked yet")
+        self.audio_deps_status_label.setObjectName("FieldHint")
+        self.audio_deps_status_label.setWordWrap(True)
+        troubleshoot_card.body_layout.addWidget(self.audio_deps_status_label)
+
+        self.qt_plugin_status_label = QLabel("Qt plugin check: not checked yet")
+        self.qt_plugin_status_label.setObjectName("FieldHint")
+        self.qt_plugin_status_label.setWordWrap(True)
+        troubleshoot_card.body_layout.addWidget(self.qt_plugin_status_label)
+
     def _on_dev_tools_toggled(self, checked: bool) -> None:
         self.dev_tools_panel.set_expanded(checked, animate=True)
         self.developerToolsChanged.emit(checked)
@@ -129,3 +176,12 @@ class OptionsPage(BaseWizardPage):
         with QSignalBlocker(self.dev_checkbox):
             self.dev_checkbox.setChecked(enabled)
         self.dev_tools_panel.set_expanded(enabled, animate=animate)
+
+    def set_portable_mode_status(self, enabled: bool) -> None:
+        self.portable_mode_label.setText(f"Portable mode: {'enabled' if enabled else 'disabled'}")
+
+    def set_audio_dependencies_status(self, text: str) -> None:
+        self.audio_deps_status_label.setText(f"Audio dependencies: {text}")
+
+    def set_qt_plugin_status(self, text: str) -> None:
+        self.qt_plugin_status_label.setText(f"Qt plugin check: {text}")

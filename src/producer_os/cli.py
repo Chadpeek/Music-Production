@@ -80,6 +80,12 @@ def _parse_arguments() -> argparse.Namespace:
             action="store_true",
             help="Enable verbose logging (developer option)",
         )
+        subparser.add_argument(
+            "--workers",
+            type=int,
+            default=1,
+            help="Worker count for feature extraction (used when parallel extraction is enabled)",
+        )
 
     # analyze
     sp = subparsers.add_parser("analyze", help="Scan and classify packs, produce a report only")
@@ -120,6 +126,16 @@ def _parse_arguments() -> argparse.Namespace:
     sp.add_argument(
         "--portable", "-p", action="store_true", help="Force portable mode (ignored if portable.flag is present)"
     )
+    # benchmark-classifier
+    sp = subparsers.add_parser(
+        "benchmark-classifier",
+        help="Run a read-only recursive classifier audit and write a benchmark report",
+    )
+    add_common(sp)
+    sp.add_argument("--output", help="Path to benchmark JSON (default: <hub>/logs/benchmark_report.json)")
+    sp.add_argument("--top-confusions", type=int, default=20, help="Number of confusion pairs to include")
+    sp.add_argument("--max-files", type=int, default=None, help="Optional cap on benchmark summary entries")
+    sp.add_argument("--compare", help="Optional prior benchmark JSON to compare low-confidence rate against")
     return parser.parse_args()
 
 
@@ -134,6 +150,13 @@ def _construct_engine(
 ) -> ProducerOSEngine:
     # Load config, styles and bucket mapping
     config = config_service.load_config(cli_portable=portable)
+    try:
+        config["config_dir"] = str(config_service.get_config_dir(cli_portable=portable))
+        config["config_path"] = str(config_service.get_config_path(cli_portable=portable))
+        config["bucket_hints_path"] = str(config_service.get_bucket_hints_path(cli_portable=portable))
+        config["bucket_hints"] = config_service.load_bucket_hints(cli_portable=portable)
+    except Exception:
+        pass
     style_data = _load_style_data(config_service, portable)
     bucket_mapping = _load_bucket_mapping(config_service, portable)
     style_service = StyleService(style_data)
@@ -194,6 +217,70 @@ def main(argv: Optional[List[str]] = None) -> int:
     if command == "doctor":
         print("Error: doctor is not yet implemented")
         return 1
+    # benchmark-classifier (read-only audit/report)
+    if command == "benchmark-classifier":
+        if not inbox_path or not hub_path:
+            print("Error: inbox and hub directories are required for benchmark-classifier")
+            return 1
+        config_service = ConfigService(app_dir=hub_path)
+        engine = _construct_engine(
+            inbox_path, hub_path, config_service, cli_portable, args.verbose, args.overwrite_nfo, args.normalize_pack_name
+        )
+        output_path = (
+            Path(args.output).expanduser().resolve()
+            if getattr(args, "output", None)
+            else (hub_path / "logs" / "benchmark_report.json")
+        )
+        benchmark = engine.run_benchmark(
+            output_path=output_path,
+            top_confusions=int(getattr(args, "top_confusions", 20) or 20),
+            max_files=getattr(args, "max_files", None),
+            workers=max(1, int(getattr(args, "workers", 1) or 1)),
+            save_feature_cache=True,
+        )
+        low_conf = dict(benchmark.get("low_confidence") or {})
+        print(
+            f"Benchmark complete: files={benchmark.get('files_classified', 0)} "
+            f"low_conf={low_conf.get('count', 0)} rate={float(low_conf.get('rate', 0.0) or 0.0):.4f}"
+        )
+        print("Top buckets:")
+        for row in list(benchmark.get("bucket_distribution") or [])[:10]:
+            print(f"  {row.get('bucket')}: {row.get('count')} ({row.get('percent')}%)")
+        print("Top confusion pairs:")
+        for row in list(benchmark.get("confusion_pairs") or [])[:10]:
+            print(f"  {row.get('chosen')} -> {row.get('runner_up')}: {row.get('count')}")
+        print(f"Benchmark report: {output_path}")
+        compare_path = getattr(args, "compare", None)
+        if compare_path:
+            try:
+                prev = json.loads(Path(compare_path).expanduser().resolve().read_text(encoding="utf-8"))
+                prev_low = float(((prev or {}).get("low_confidence") or {}).get("rate", 0.0) or 0.0)
+                curr_low = float(low_conf.get("rate", 0.0) or 0.0)
+                print(f"Compare low-confidence rate: prev={prev_low:.4f} curr={curr_low:.4f} delta={curr_low - prev_low:+.4f}")
+                prev_pairs = {
+                    (str(p.get("chosen")), str(p.get("runner_up"))): int(p.get("count", 0) or 0)
+                    for p in (prev.get("confusion_pairs") or [])
+                    if isinstance(p, dict)
+                }
+                curr_pairs = {
+                    (str(p.get("chosen")), str(p.get("runner_up"))): int(p.get("count", 0) or 0)
+                    for p in (benchmark.get("confusion_pairs") or [])
+                    if isinstance(p, dict)
+                }
+                all_keys = set(prev_pairs) | set(curr_pairs)
+                deltas = sorted(
+                    ((key, curr_pairs.get(key, 0) - prev_pairs.get(key, 0)) for key in all_keys),
+                    key=lambda item: (-abs(item[1]), item[0]),
+                )
+                print("Top confusion pair deltas:")
+                for (chosen, runner_up), delta in deltas[:10]:
+                    print(
+                        f"  {chosen} -> {runner_up}: prev={prev_pairs.get((chosen, runner_up), 0)} "
+                        f"curr={curr_pairs.get((chosen, runner_up), 0)} delta={delta:+d}"
+                    )
+            except Exception as exc:
+                print(f"Warning: failed to compare benchmark reports: {exc}")
+        return 0
     # For other commands require inbox and hub
     if not inbox_path or not hub_path:
         print("Error: inbox and hub directories are required")
@@ -217,7 +304,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         mode=mode,
         overwrite_nfo=args.overwrite_nfo,
         normalize_pack_name=args.normalize_pack_name,
-        developer_options={"verbose": args.verbose},
+        developer_options={"verbose": args.verbose, "workers": max(1, int(getattr(args, "workers", 1) or 1))},
     )
     print(json.dumps(report, indent=2))
     return 0

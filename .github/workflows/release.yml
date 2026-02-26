@@ -51,11 +51,27 @@ jobs:
         run: |
           $nuitkaArgs = @(
             "--mode=standalone",
+            "--enable-plugin=pyside6",
             "--assume-yes-for-downloads",
+            "--windows-console-mode=disable",
             "--output-dir=dist",
             "--output-filename=ProducerOS",
+            "--include-package=producer_os",
+            "--include-package=librosa",
+            "--include-package=scipy",
+            "--include-package=numba",
+            "--include-package=llvmlite",
+            "--include-module=soundfile",
+            "--include-package-data=librosa",
+            "--include-package-data=scipy",
+            "--include-package-data=numba",
+            "--include-package-data=llvmlite",
+            "--include-module=sklearn",
+            "--include-module=packaging",
+            "--include-module=joblib",
             "--include-package=qdarktheme",
-            "--include-package-data=qdarktheme"
+            "--include-package-data=qdarktheme",
+            "--module-parameter=numba-disable-jit=yes"
           )
           if (Test-Path "assets\app_icon.ico") {
             $nuitkaArgs += "--windows-icon-from-ico=assets/app_icon.ico"
@@ -63,6 +79,16 @@ jobs:
           $nuitkaArgs += "build_gui_entry.py"
 
           python -m nuitka @nuitkaArgs
+
+      - name: Verify Qt platform plugin bundled
+        shell: pwsh
+        run: |
+          $qwindows = Get-ChildItem -Path "dist\build_gui_entry.dist" -Recurse -Filter "qwindows.dll" -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if ($null -eq $qwindows) {
+            throw "Qt platform plugin qwindows.dll not found in standalone build output."
+          }
+          Write-Host "Found qwindows.dll at $($qwindows.FullName)"
 
       - name: Zip portable
         shell: pwsh

@@ -65,6 +65,13 @@ jobs:
 
           python -m nuitka @nuitkaArgs
 
+          $qwindows = Get-ChildItem -Path "dist\build_gui_entry.dist" -Recurse -Filter "qwindows.dll" -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if ($null -eq $qwindows) {
+            throw "Qt platform plugin qwindows.dll not found in standalone build output."
+          }
+          Write-Host "Found qwindows.dll at $($qwindows.FullName)"
+
           # Zip the whole dist folder that contains the exe + DLLs
           if (Test-Path ProducerOS-windows.zip) { Remove-Item ProducerOS-windows.zip -Force }
           Compress-Archive -Path "dist\build_gui_entry.dist\*" -DestinationPath "ProducerOS-windows.zip"

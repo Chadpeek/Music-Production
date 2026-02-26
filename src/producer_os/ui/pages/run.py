@@ -264,8 +264,8 @@ class RunPage(BaseWizardPage):
         self._waveform_cache: dict[str, dict[str, Any]] = {}
         self._audio_duration_ms = 0
         self._current_audio_source = ""
-        self._audio_player = None
-        self._audio_output = None
+        self._audio_player: Any | None = None
+        self._audio_output: Any | None = None
         self._suppress_autoplay_once = False
         self._reset_phase_progress()
 
@@ -1605,17 +1605,19 @@ class RunPage(BaseWizardPage):
             self.review_waveform.clear("QtMultimedia is unavailable in this environment.")
             return
         try:
-            self._audio_output = QAudioOutput(self)
-            self._audio_output.setVolume(0.65)
-            self._audio_player = QMediaPlayer(self)
-            self._audio_player.setAudioOutput(self._audio_output)
-            self._audio_player.positionChanged.connect(self._on_audio_position_changed)
-            self._audio_player.durationChanged.connect(self._on_audio_duration_changed)
-            self._audio_player.playbackStateChanged.connect(self._on_audio_playback_state_changed)
+            audio_output = QAudioOutput(self)
+            audio_output.setVolume(0.65)
+            audio_player = QMediaPlayer(self)
+            audio_player.setAudioOutput(audio_output)
+            audio_player.positionChanged.connect(self._on_audio_position_changed)
+            audio_player.durationChanged.connect(self._on_audio_duration_changed)
+            audio_player.playbackStateChanged.connect(self._on_audio_playback_state_changed)
             try:
-                self._audio_player.errorOccurred.connect(self._on_audio_error)  # type: ignore[attr-defined]
+                audio_player.errorOccurred.connect(self._on_audio_error)  # type: ignore[attr-defined]
             except Exception:
                 pass
+            self._audio_output = audio_output
+            self._audio_player = audio_player
         except Exception:
             self._audio_player = None
             self._audio_output = None

@@ -20,11 +20,6 @@ concurrency:
 
 env:
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
-  WINDOWS_SIGN_ENABLE: ${{ secrets.WINDOWS_SIGN_ENABLE }}
-  WINDOWS_SIGN_CERT_B64: ${{ secrets.WINDOWS_SIGN_CERT_B64 }}
-  WINDOWS_SIGN_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGN_CERT_PASSWORD }}
-  WINDOWS_SIGN_TIMESTAMP_URL: ${{ secrets.WINDOWS_SIGN_TIMESTAMP_URL }}
-  WINDOWS_SIGNTOOL_PATH: ${{ secrets.WINDOWS_SIGNTOOL_PATH }}
 
 jobs:
   build:
@@ -79,6 +74,7 @@ jobs:
           cache-dependency-path: pyproject.toml
 
       - name: Install dependencies
+        id: dep_install
         shell: pwsh
         run: |
           $start = Get-Date
@@ -88,7 +84,7 @@ jobs:
           python -m pip install --no-cache-dir nuitka==2.8.10
           python -m nuitka --version
           $elapsed = [Math]::Round(((Get-Date) - $start).TotalSeconds, 3)
-          "RELEASE_DEP_INSTALL_SECONDS=$elapsed" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "elapsed_seconds=$elapsed" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: Print release build context
         shell: pwsh
@@ -115,6 +111,12 @@ jobs:
       - name: Build standalone + zip portable
         id: portable_bundle
         shell: pwsh
+        env:
+          WINDOWS_SIGN_ENABLE: ${{ secrets.WINDOWS_SIGN_ENABLE }}
+          WINDOWS_SIGN_CERT_B64: ${{ secrets.WINDOWS_SIGN_CERT_B64 }}
+          WINDOWS_SIGN_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGN_CERT_PASSWORD }}
+          WINDOWS_SIGN_TIMESTAMP_URL: ${{ secrets.WINDOWS_SIGN_TIMESTAMP_URL }}
+          WINDOWS_SIGNTOOL_PATH: ${{ secrets.WINDOWS_SIGNTOOL_PATH }}
         run: |
           $zip = "ProducerOS-${{ steps.release_meta.outputs.version }}-portable-win64.zip"
           & ".github\scripts\build_windows_nuitka.ps1" `
@@ -125,9 +127,10 @@ jobs:
           "zip_path=$zip" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: Start installer timer
+        id: installer_timer_start
         shell: pwsh
         run: |
-          "INSTALLER_BUILD_START_UTC=$([DateTime]::UtcNow.ToString('o'))" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "utc_start=$([DateTime]::UtcNow.ToString('o'))" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: Build installer
         uses: Minionguyjpro/Inno-Setup-Action@v1.2.6
@@ -136,14 +139,21 @@ jobs:
           options: /DMyAppVersion=${{ steps.release_meta.outputs.version }}
 
       - name: Record installer timer
+        id: installer_timer_end
         shell: pwsh
         run: |
-          $startUtc = [DateTime]::Parse("${{ env.INSTALLER_BUILD_START_UTC }}").ToUniversalTime()
+          $startUtc = [DateTime]::Parse("${{ steps.installer_timer_start.outputs.utc_start }}").ToUniversalTime()
           $elapsed = [Math]::Round(([DateTime]::UtcNow - $startUtc).TotalSeconds, 3)
-          "INSTALLER_BUILD_SECONDS=$elapsed" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "elapsed_seconds=$elapsed" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: Sign installer (optional)
         shell: pwsh
+        env:
+          WINDOWS_SIGN_ENABLE: ${{ secrets.WINDOWS_SIGN_ENABLE }}
+          WINDOWS_SIGN_CERT_B64: ${{ secrets.WINDOWS_SIGN_CERT_B64 }}
+          WINDOWS_SIGN_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGN_CERT_PASSWORD }}
+          WINDOWS_SIGN_TIMESTAMP_URL: ${{ secrets.WINDOWS_SIGN_TIMESTAMP_URL }}
+          WINDOWS_SIGNTOOL_PATH: ${{ secrets.WINDOWS_SIGNTOOL_PATH }}
         run: |
           $installer = "dist\ProducerOS-Setup-${{ steps.release_meta.outputs.version }}.exe"
           & ".github\scripts\sign_windows_artifacts.ps1" -Paths @($installer)
@@ -177,8 +187,8 @@ jobs:
           $timing = "dist\BUILD_TIMING.txt"
           if (!(Test-Path $timing)) { throw "Missing timing report: $timing" }
           Add-Content -Path $timing -Value @(
-            "workflow_release_dependency_install_seconds`t${{ env.RELEASE_DEP_INSTALL_SECONDS }}",
-            "workflow_release_installer_build_seconds`t${{ env.INSTALLER_BUILD_SECONDS }}"
+            "workflow_release_dependency_install_seconds`t${{ steps.dep_install.outputs.elapsed_seconds }}",
+            "workflow_release_installer_build_seconds`t${{ steps.installer_timer_end.outputs.elapsed_seconds }}"
           )
           Get-Content $timing | ForEach-Object { Write-Host $_ }
 

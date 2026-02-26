@@ -25,11 +25,6 @@ permissions:
 
 env:
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
-  WINDOWS_SIGN_ENABLE: ${{ secrets.WINDOWS_SIGN_ENABLE }}
-  WINDOWS_SIGN_CERT_B64: ${{ secrets.WINDOWS_SIGN_CERT_B64 }}
-  WINDOWS_SIGN_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGN_CERT_PASSWORD }}
-  WINDOWS_SIGN_TIMESTAMP_URL: ${{ secrets.WINDOWS_SIGN_TIMESTAMP_URL }}
-  WINDOWS_SIGNTOOL_PATH: ${{ secrets.WINDOWS_SIGNTOOL_PATH }}
 
 jobs:
   build-windows:
@@ -48,6 +43,7 @@ jobs:
           cache-dependency-path: pyproject.toml
 
       - name: Install deps
+        id: dep_install
         shell: pwsh
         run: |
           $start = Get-Date
@@ -57,7 +53,7 @@ jobs:
           python -m pip install --no-cache-dir nuitka==2.8.10
           python -m nuitka --version
           $elapsed = [Math]::Round(((Get-Date) - $start).TotalSeconds, 3)
-          "BUILD_DEP_INSTALL_SECONDS=$elapsed" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "elapsed_seconds=$elapsed" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: Print build context
         shell: pwsh
@@ -75,6 +71,12 @@ jobs:
 
       - name: Build EXE (Nuitka standalone)
         shell: pwsh
+        env:
+          WINDOWS_SIGN_ENABLE: ${{ secrets.WINDOWS_SIGN_ENABLE }}
+          WINDOWS_SIGN_CERT_B64: ${{ secrets.WINDOWS_SIGN_CERT_B64 }}
+          WINDOWS_SIGN_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGN_CERT_PASSWORD }}
+          WINDOWS_SIGN_TIMESTAMP_URL: ${{ secrets.WINDOWS_SIGN_TIMESTAMP_URL }}
+          WINDOWS_SIGNTOOL_PATH: ${{ secrets.WINDOWS_SIGNTOOL_PATH }}
         run: |
           & ".github\scripts\build_windows_nuitka.ps1" `
             -BuildProfile "${{ inputs.build_profile }}" `
@@ -88,7 +90,7 @@ jobs:
           $timing = "dist\BUILD_TIMING.txt"
           if (!(Test-Path $timing)) { throw "Missing timing report: $timing" }
           Add-Content -Path $timing -Value @(
-            "workflow_build_dependency_install_seconds`t${{ env.BUILD_DEP_INSTALL_SECONDS }}"
+            "workflow_build_dependency_install_seconds`t${{ steps.dep_install.outputs.elapsed_seconds }}"
           )
           Get-Content $timing | ForEach-Object { Write-Host $_ }
 

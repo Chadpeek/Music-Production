@@ -1,6 +1,7 @@
 param(
     [string]$ZipOutput = "",
     [int]$SmokeTestTimeoutSeconds = 20,
+    [int]$TinyAnalyzeSmokeTimeoutSeconds = 45,
     [ValidateSet("dev", "release")]
     [string]$BuildProfile = "release",
     [string]$RepoRoot = "",
@@ -53,22 +54,18 @@ try {
         "--nofollow-import-to=packaging.tests",
         "--nofollow-import-to=numpy.tests",
         "--nofollow-import-to=joblib.test",
-        "--nofollow-import-to=joblib.testing"
+        "--nofollow-import-to=joblib.testing",
+        "--nofollow-import-to=sklearn.externals._numpydoc"
     )
     switch ($BuildProfile) {
         "release" {
-            # Conservative release profile keeps explicit includes for known optional imports.
-            $nuitkaArgs += @(
-                "--include-module=sklearn",
-                "--include-module=joblib"
-            )
+            # Trial: rely on runtime smoke coverage instead of forcing sklearn/joblib.
+            # This significantly reduces standalone compile graph size when those paths
+            # are not needed by current runtime features.
         }
         "dev" {
-            # Faster local/CI dev builds: omit explicit sklearn/joblib force-includes.
-            # Smoke tests still validate packaged startup, but runtime coverage is narrower.
-            $nuitkaArgs += @(
-                "--nofollow-import-to=sklearn.externals._numpydoc"
-            )
+            # Faster local/CI dev builds: same dependency exclusions as release, with
+            # runtime smoke coverage to validate packaged startup + tiny analyze.
         }
         default {
             throw "Unsupported BuildProfile: $BuildProfile"
@@ -242,6 +239,56 @@ try {
         Remove-Item Env:PRODUCER_OS_SMOKE_TEST_MS -ErrorAction SilentlyContinue
     }
     Write-Host "Smoke test passed."
+
+    $smokeInbox = Join-Path $repoRoot "examples\synthetic_corpus"
+    if (!(Test-Path $smokeInbox)) {
+        throw "Synthetic corpus missing for packaged tiny-analyze smoke: $smokeInbox"
+    }
+    $smokeHub = Join-Path $repoRoot "dist\smoke_tiny_analyze_hub"
+    $smokeOut = Join-Path $repoRoot "dist\SMOKE_TINY_ANALYZE.json"
+    if (Test-Path $smokeHub) { Remove-Item -Recurse -Force $smokeHub }
+    if (Test-Path $smokeOut) { Remove-Item -Force $smokeOut }
+    New-Item -ItemType Directory -Force -Path $smokeHub | Out-Null
+
+    Write-Host "Running packaged tiny-analyze smoke test..."
+    $env:PRODUCER_OS_SMOKE_TINY_ANALYZE = "1"
+    $env:PRODUCER_OS_SMOKE_INBOX = $smokeInbox
+    $env:PRODUCER_OS_SMOKE_HUB = $smokeHub
+    $env:PRODUCER_OS_SMOKE_OUT = $smokeOut
+    $analyzeProc = Start-Process -FilePath $exePath -PassThru
+    try {
+        Wait-Process -Id $analyzeProc.Id -Timeout $TinyAnalyzeSmokeTimeoutSeconds
+        $analyzeProc.Refresh()
+        if ($analyzeProc.ExitCode -ne 0) {
+            throw "Tiny-analyze smoke failed with exit code $($analyzeProc.ExitCode)"
+        }
+        if (!(Test-Path $smokeOut)) {
+            throw "Tiny-analyze smoke output missing: $smokeOut"
+        }
+        $smokeJson = Get-Content -Path $smokeOut -Raw | ConvertFrom-Json
+        if (-not $smokeJson.ok) {
+            throw "Tiny-analyze smoke output reported failure: $($smokeJson | ConvertTo-Json -Depth 5 -Compress)"
+        }
+        if ([int]$smokeJson.files_processed -le 0) {
+            throw "Tiny-analyze smoke processed 0 files."
+        }
+        Write-Host "Tiny-analyze smoke passed. files_processed=$($smokeJson.files_processed) packs=$($smokeJson.packs)"
+    }
+    catch {
+        try {
+            if (-not $analyzeProc.HasExited) {
+                Stop-Process -Id $analyzeProc.Id -Force -ErrorAction SilentlyContinue
+            }
+        }
+        catch {}
+        throw
+    }
+    finally {
+        Remove-Item Env:PRODUCER_OS_SMOKE_TINY_ANALYZE -ErrorAction SilentlyContinue
+        Remove-Item Env:PRODUCER_OS_SMOKE_INBOX -ErrorAction SilentlyContinue
+        Remove-Item Env:PRODUCER_OS_SMOKE_HUB -ErrorAction SilentlyContinue
+        Remove-Item Env:PRODUCER_OS_SMOKE_OUT -ErrorAction SilentlyContinue
+    }
 
     $signScript = Join-Path $PSScriptRoot "sign_windows_artifacts.ps1"
     if (Test-Path $signScript) {

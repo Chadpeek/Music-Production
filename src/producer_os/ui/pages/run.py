@@ -3,11 +3,12 @@ from __future__ import annotations
 import datetime
 import json
 import re
+import wave
 from pathlib import Path
 from typing import Any, Optional
 
-from PySide6.QtCore import QSignalBlocker, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtCore import QSettings, QSignalBlocker, Qt, QUrl, Signal
+from PySide6.QtGui import QColor, QDesktopServices, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -32,6 +33,17 @@ from PySide6.QtWidgets import (
 from producer_os.ui.pages.base import BaseWizardPage
 from producer_os.ui.widgets import NoWheelComboBox, StatChip, StatusBadge, repolish, set_widget_role
 
+try:
+    from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+except Exception:  # pragma: no cover - optional runtime dependency path
+    QAudioOutput = None  # type: ignore[assignment]
+    QMediaPlayer = None  # type: ignore[assignment]
+
+try:
+    import soundfile as _sf  # type: ignore[import-not-found]
+except Exception:  # pragma: no cover - optional runtime dependency path
+    _sf = None
+
 _TOKEN_SPLIT_RE = re.compile(r"[ _-]+")
 _REVIEW_WIDGET_THRESHOLD = 500
 
@@ -41,6 +53,75 @@ _PHASE_LABELS: list[tuple[str, str]] = [
     ("route", "Routing"),
     ("write", "Writing"),
 ]
+
+
+class _WaveformPreview(QWidget):
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._peaks: list[float] = []
+        self._progress: float = 0.0
+        self._status_text = "Select a row to preview audio."
+        self.setObjectName("WaveformPreview")
+        self.setMinimumHeight(84)
+
+    def set_waveform(self, peaks: list[float], status_text: str = "") -> None:
+        self._peaks = [max(0.0, min(1.0, float(p))) for p in peaks]
+        if status_text:
+            self._status_text = status_text
+        self._progress = 0.0
+        self.update()
+
+    def set_status_text(self, text: str) -> None:
+        self._status_text = str(text or "")
+        self.update()
+
+    def set_progress_fraction(self, frac: float) -> None:
+        self._progress = max(0.0, min(1.0, float(frac or 0.0)))
+        self.update()
+
+    def clear(self, text: str = "No preview available.") -> None:
+        self._peaks = []
+        self._progress = 0.0
+        self._status_text = text
+        self.update()
+
+    def paintEvent(self, _event) -> None:  # type: ignore[override]
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        rect = self.rect().adjusted(1, 1, -1, -1)
+        bg = self.palette().base().color()
+        border = self.palette().mid().color()
+        painter.setPen(QPen(border, 1))
+        painter.setBrush(bg)
+        painter.drawRoundedRect(rect, 8, 8)
+
+        if not self._peaks:
+            painter.setPen(QPen(self.palette().mid().color()))
+            painter.drawText(rect.adjusted(10, 0, -10, 0), Qt.AlignmentFlag.AlignCenter, self._status_text)
+            return
+
+        content = rect.adjusted(10, 8, -10, -20)
+        center_y = content.center().y()
+        width = max(1, content.width())
+        height = max(1, content.height())
+
+        wave_color = self.palette().highlight().color()
+        wave_color.setAlpha(180)
+        progress_color = self.palette().highlight().color()
+        progress_x = content.left() + int(width * self._progress)
+
+        painter.setPen(QPen(wave_color, 1))
+        peak_count = len(self._peaks)
+        for i, peak in enumerate(self._peaks):
+            x = content.left() + int(i * width / max(1, peak_count - 1))
+            half_h = max(1, int((height * 0.5) * peak))
+            painter.drawLine(x, center_y - half_h, x, center_y + half_h)
+
+        painter.setPen(QPen(progress_color, 2))
+        painter.drawLine(progress_x, content.top(), progress_x, content.bottom())
+
+        painter.setPen(QPen(self.palette().mid().color()))
+        painter.drawText(rect.adjusted(10, 0, -10, -4), Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignLeft, self._status_text)
 
 
 class _BucketBadgeDelegate(QStyledItemDelegate):
@@ -173,6 +254,19 @@ class RunPage(BaseWizardPage):
         self._timeline_phase_keys: list[str] = []
         self._phase_progress: dict[str, dict[str, Any]] = {}
         self._active_mode: str | None = None
+        self._review_sort_column: int = 0
+        self._review_sort_order = Qt.SortOrder.AscendingOrder
+        self._preview_sort_column: int = 0
+        self._preview_sort_order = Qt.SortOrder.AscendingOrder
+        self._pending_filter_restore: dict[str, Any] = {}
+        self._restoring_layout_prefs = False
+        self._prefs = QSettings("KidChadd", "Producer OS")
+        self._waveform_cache: dict[str, dict[str, Any]] = {}
+        self._audio_duration_ms = 0
+        self._current_audio_source = ""
+        self._audio_player = None
+        self._audio_output = None
+        self._suppress_autoplay_once = False
         self._reset_phase_progress()
 
         action_card = self.add_card("Execution Controls", "Run an analysis first to verify routing before moving files.")
@@ -227,6 +321,11 @@ class RunPage(BaseWizardPage):
         self.review_feedback_label.setWordWrap(True)
         export_row.addWidget(self.review_feedback_label, 1)
         export_card.body_layout.addLayout(export_row)
+
+        self._init_audio_preview_runtime()
+        self._wire_layout_pref_listeners()
+        self._restore_layout_prefs()
+        self._sync_batch_review_controls()
 
     # ------------------------------------------------------------------
     # UI construction
@@ -324,6 +423,42 @@ class RunPage(BaseWizardPage):
         self.review_filter_hint_label.setWordWrap(True)
         layout.addWidget(self.review_filter_hint_label)
 
+        batch_row = QHBoxLayout()
+        batch_row.setContentsMargins(0, 0, 0, 0)
+        batch_row.setSpacing(6)
+        self.review_batch_override_btn = QPushButton("Mark selected as…")
+        set_widget_role(self.review_batch_override_btn, "ghost")
+        self.review_batch_override_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowRight))
+        self.review_batch_override_btn.clicked.connect(self._open_batch_override_menu)
+        batch_row.addWidget(self.review_batch_override_btn)
+
+        self.review_batch_hint_btn = QPushButton("Apply hint to selected…")
+        set_widget_role(self.review_batch_hint_btn, "ghost")
+        self.review_batch_hint_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogInfoView))
+        self.review_batch_hint_btn.clicked.connect(self._open_batch_hint_menu_from_button)
+        batch_row.addWidget(self.review_batch_hint_btn)
+
+        self.review_filter_selected_pack_btn = QPushButton("Only selected pack")
+        set_widget_role(self.review_filter_selected_pack_btn, "ghost")
+        self.review_filter_selected_pack_btn.clicked.connect(self._filter_to_selected_pack)
+        batch_row.addWidget(self.review_filter_selected_pack_btn)
+
+        self.review_filter_selected_bucket_btn = QPushButton("Only selected bucket")
+        set_widget_role(self.review_filter_selected_bucket_btn, "ghost")
+        self.review_filter_selected_bucket_btn.clicked.connect(self._filter_to_selected_bucket)
+        batch_row.addWidget(self.review_filter_selected_bucket_btn)
+
+        self.review_clear_filters_btn = QPushButton("Clear filters")
+        set_widget_role(self.review_clear_filters_btn, "ghost")
+        self.review_clear_filters_btn.clicked.connect(self._clear_review_filters)
+        batch_row.addWidget(self.review_clear_filters_btn)
+
+        batch_row.addStretch(1)
+        self.review_selection_count_label = QLabel("0 selected")
+        self.review_selection_count_label.setObjectName("MutedLabel")
+        batch_row.addWidget(self.review_selection_count_label)
+        layout.addLayout(batch_row)
+
         self.review_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.review_splitter.setChildrenCollapsible(False)
 
@@ -337,9 +472,10 @@ class RunPage(BaseWizardPage):
             ["Pack", "File", "Chosen", "Confidence", "Margin", "Top 3", "Override", "Hint Action"]
         )
         self.review_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.review_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.review_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.review_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.review_table.setAlternatingRowColors(True)
+        self.review_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         # Sorting a QTableWidget with thousands of rows plus per-row cell widgets
         # (combo boxes/buttons) is unstable and very slow on Windows. Keep review
         # filtering fast/stable and leave sorting disabled here.
@@ -355,6 +491,7 @@ class RunPage(BaseWizardPage):
         header.setSectionResizeMode(6, header.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(7, header.ResizeMode.ResizeToContents)
         self.review_table.itemSelectionChanged.connect(self._update_review_details)
+        self.review_table.customContextMenuRequested.connect(self._open_review_context_menu)
         left_layout.addWidget(self.review_table, 1)
 
         right_panel = QWidget()
@@ -371,6 +508,32 @@ class RunPage(BaseWizardPage):
         self.review_selected_meta_label.setObjectName("FieldHint")
         self.review_selected_meta_label.setWordWrap(True)
         right_layout.addWidget(self.review_selected_meta_label)
+
+        media_row = QHBoxLayout()
+        media_row.setContentsMargins(0, 0, 0, 0)
+        media_row.setSpacing(6)
+        self.review_audio_play_btn = QPushButton("Play")
+        set_widget_role(self.review_audio_play_btn, "ghost")
+        self.review_audio_play_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay))
+        self.review_audio_play_btn.clicked.connect(self._toggle_audio_playback)
+        media_row.addWidget(self.review_audio_play_btn)
+        self.review_audio_stop_btn = QPushButton("Stop")
+        set_widget_role(self.review_audio_stop_btn, "ghost")
+        self.review_audio_stop_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaStop))
+        self.review_audio_stop_btn.clicked.connect(self._stop_audio_playback)
+        media_row.addWidget(self.review_audio_stop_btn)
+        self.review_audio_autoplay = QCheckBox("Auto-play on select")
+        self.review_audio_autoplay.setChecked(True)
+        self.review_audio_autoplay.toggled.connect(lambda _checked: self._save_layout_prefs())
+        media_row.addWidget(self.review_audio_autoplay)
+        media_row.addStretch(1)
+        self.review_audio_status_label = QLabel("Audio preview ready")
+        self.review_audio_status_label.setObjectName("MutedLabel")
+        media_row.addWidget(self.review_audio_status_label)
+        right_layout.addLayout(media_row)
+
+        self.review_waveform = _WaveformPreview()
+        right_layout.addWidget(self.review_waveform)
 
         detail_controls = QHBoxLayout()
         detail_controls.setContentsMargins(0, 0, 0, 0)
@@ -535,6 +698,10 @@ class RunPage(BaseWizardPage):
         self.status_badge.set_status("Working", kind="running", pulsing=True)
         self.preview_stale_label.setText("Preview reflects the latest analyze/dry-run report.")
         self.review_details.setPlainText("No review rows available yet. Run Analyze to populate the review queue.")
+        self.review_waveform.clear("No preview available yet. Run Analyze and select a row.")
+        self.review_audio_status_label.setText("Audio preview ready")
+        self._stop_audio_playback()
+        self._sync_batch_review_controls()
         self._refresh_timeline_labels()
         self._set_timeline_state(active_index=0, completed_upto=-1)
 
@@ -575,6 +742,7 @@ class RunPage(BaseWizardPage):
         )
         self._refresh_bucket_filter()
         self._refresh_pack_filters()
+        self._apply_restored_filter_values_once()
 
         self._update_summary_label()
         if not self._has_live_logs:
@@ -598,6 +766,7 @@ class RunPage(BaseWizardPage):
         self._phase_progress["write"].update({"event": "done", "message": "Completed"})
         self._refresh_timeline_labels()
         self._set_timeline_state(active_index=None, completed_upto=len(self._timeline_labels) - 1)
+        self._save_layout_prefs()
 
     def get_manual_review_overlay(self) -> dict[str, Any]:
         if not self._manual_overrides and not self._saved_hints:
@@ -783,6 +952,7 @@ class RunPage(BaseWizardPage):
         try:
             self.log_edit.setMinimumHeight(200 if compact else 240)
             self.review_details.setMinimumHeight(150 if compact else 180)
+            self.review_waveform.setMinimumHeight(72 if compact else 84)
         except Exception:
             pass
 
@@ -961,6 +1131,9 @@ class RunPage(BaseWizardPage):
         elif self.review_feedback_label.text().startswith("Large review set detected."):
             self.review_feedback_label.setText("")
             self.review_feedback_label.setProperty("state", None)
+        repolish(self.review_feedback_label)
+        self._sync_batch_review_controls()
+        self._save_layout_prefs()
 
     def _apply_preview_filters(self) -> None:
         query = (self.preview_search.text() or "").strip().lower()
@@ -997,6 +1170,7 @@ class RunPage(BaseWizardPage):
             rows.append(row)
 
         self._render_preview_table(rows)
+        self._save_layout_prefs()
 
     def _render_review_table(self, rows: list[dict[str, Any]]) -> None:
         table = self.review_table
@@ -1074,9 +1248,13 @@ class RunPage(BaseWizardPage):
             table.setUpdatesEnabled(prev_updates)
 
         if table.rowCount() > 0:
+            self._suppress_autoplay_once = True
             table.selectRow(0)
         else:
             self.review_details.setPlainText("No rows match the current filter.")
+            self.review_waveform.clear("No rows match the current filter.")
+            self.review_audio_status_label.setText("Audio preview idle")
+        self._sync_batch_review_controls()
 
     def _render_preview_table(self, rows: list[dict[str, Any]]) -> None:
         table = self.preview_table
@@ -1113,6 +1291,10 @@ class RunPage(BaseWizardPage):
         # Sorting on very large preview tables can make filter toggles feel like crashes.
         if len(rows) <= 2000:
             table.setSortingEnabled(True)
+            try:
+                table.sortItems(self._preview_sort_column, self._preview_sort_order)
+            except Exception:
+                pass
 
     def _update_preview_stale_state(self) -> None:
         self._preview_stale = bool(self._manual_overrides or self._saved_hints)
@@ -1140,21 +1322,36 @@ class RunPage(BaseWizardPage):
         row = self._row_index_by_source.get(source)
         if row is None or not bucket:
             return
-        original_bucket = str(row.get("original_bucket") or row.get("chosen_bucket") or "")
-        row["override_bucket"] = "" if bucket == original_bucket else bucket
-        row["effective_bucket"] = bucket
+        self._apply_override_to_rows([row], bucket)
 
-        if bucket == original_bucket:
-            self._manual_overrides.pop(source, None)
-        else:
-            self._manual_overrides[source] = {
-                "source": source,
-                "original_bucket": original_bucket,
-                "override_bucket": bucket,
-                "reason": "user_review",
-                "timestamp": datetime.datetime.now().isoformat(),
-            }
-
+    def _apply_override_to_rows(self, rows: list[dict[str, Any]], bucket: str) -> None:
+        bucket = str(bucket or "").strip()
+        if not bucket or not rows:
+            return
+        changed = False
+        now = datetime.datetime.now().isoformat()
+        for row in rows:
+            source = str(row.get("source", ""))
+            if not source:
+                continue
+            original_bucket = str(row.get("original_bucket") or row.get("chosen_bucket") or "")
+            if str(row.get("effective_bucket") or row.get("chosen_bucket") or "") == bucket:
+                continue
+            row["override_bucket"] = "" if bucket == original_bucket else bucket
+            row["effective_bucket"] = bucket
+            if bucket == original_bucket:
+                self._manual_overrides.pop(source, None)
+            else:
+                self._manual_overrides[source] = {
+                    "source": source,
+                    "original_bucket": original_bucket,
+                    "override_bucket": bucket,
+                    "reason": "user_review",
+                    "timestamp": now,
+                }
+            changed = True
+        if not changed:
+            return
         self._rewrite_table_bucket_cells()
         self._rebuild_pack_breakdown()
         self._preview_stale = True
@@ -1163,6 +1360,9 @@ class RunPage(BaseWizardPage):
         self._update_review_details()
         self._update_preview_stale_state()
         self._sync_review_detail_controls()
+        self.review_feedback_label.setText(f"Applied override '{bucket}' to {len(rows)} row(s). Rerun before copy/move.")
+        self.review_feedback_label.setProperty("state", "success")
+        repolish(self.review_feedback_label)
 
     def _rewrite_table_bucket_cells(self) -> None:
         for r in range(self.review_table.rowCount()):
@@ -1256,11 +1456,31 @@ class RunPage(BaseWizardPage):
         return sorted(tokens)
 
     def _selected_row(self) -> Optional[dict[str, Any]]:
-        items = self.review_table.selectedItems()
-        if not items:
+        selection_model = self.review_table.selectionModel()
+        if selection_model is None:
             return None
-        source = str(items[0].data(Qt.ItemDataRole.UserRole) or "")
+        selected_rows = selection_model.selectedRows()
+        if not selected_rows:
+            return None
+        source = str(selected_rows[0].data(Qt.ItemDataRole.UserRole) or "")
         return self._row_index_by_source.get(source)
+
+    def _selected_rows(self) -> list[dict[str, Any]]:
+        selection_model = self.review_table.selectionModel()
+        if selection_model is None:
+            return []
+        rows: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for model_index in selection_model.selectedRows():
+            source = str(model_index.data(Qt.ItemDataRole.UserRole) or "")
+            if not source or source in seen:
+                continue
+            row = self._row_index_by_source.get(source)
+            if row is None:
+                continue
+            seen.add(source)
+            rows.append(row)
+        return rows
 
     def _update_review_details(self) -> None:
         row = self._selected_row()
@@ -1269,7 +1489,9 @@ class RunPage(BaseWizardPage):
                 self.review_details.setPlainText("No review rows available.")
                 self.review_selected_file_label.setText("No review rows available.")
                 self.review_selected_meta_label.setText("")
+                self.review_waveform.clear("No review rows available.")
             self._sync_review_detail_controls(None)
+            self._sync_batch_review_controls()
             return
 
         self.review_selected_file_label.setText(f"{row.get('file', '')}")
@@ -1303,6 +1525,8 @@ class RunPage(BaseWizardPage):
         }
         self.review_details.setPlainText(json.dumps(details, indent=2))
         self._sync_review_detail_controls(row)
+        self._sync_batch_review_controls()
+        self._load_audio_preview_for_row(row)
 
     def _sync_review_detail_controls(self, row: Optional[dict[str, Any]] = None) -> None:
         row = row if row is not None else self._selected_row()
@@ -1369,3 +1593,560 @@ class RunPage(BaseWizardPage):
                     f"{int(cache_stats.get('hits', 0) or 0)}/{int(cache_stats.get('misses', 0) or 0)}"
                 )
         self.summary_label.setText(" | ".join(parts) if parts else "No results.")
+
+    # ------------------------------------------------------------------
+    # Audio preview / waveform
+    def _init_audio_preview_runtime(self) -> None:
+        if QMediaPlayer is None or QAudioOutput is None:
+            self.review_audio_play_btn.setEnabled(False)
+            self.review_audio_stop_btn.setEnabled(False)
+            self.review_audio_autoplay.setEnabled(False)
+            self.review_audio_status_label.setText("QtMultimedia unavailable")
+            self.review_waveform.clear("QtMultimedia is unavailable in this environment.")
+            return
+        try:
+            self._audio_output = QAudioOutput(self)
+            self._audio_output.setVolume(0.65)
+            self._audio_player = QMediaPlayer(self)
+            self._audio_player.setAudioOutput(self._audio_output)
+            self._audio_player.positionChanged.connect(self._on_audio_position_changed)
+            self._audio_player.durationChanged.connect(self._on_audio_duration_changed)
+            self._audio_player.playbackStateChanged.connect(self._on_audio_playback_state_changed)
+            try:
+                self._audio_player.errorOccurred.connect(self._on_audio_error)  # type: ignore[attr-defined]
+            except Exception:
+                pass
+        except Exception:
+            self._audio_player = None
+            self._audio_output = None
+            self.review_audio_play_btn.setEnabled(False)
+            self.review_audio_stop_btn.setEnabled(False)
+            self.review_audio_autoplay.setEnabled(False)
+            self.review_audio_status_label.setText("Audio preview unavailable")
+            self.review_waveform.clear("Audio preview initialization failed.")
+
+    def _on_audio_position_changed(self, position_ms: int) -> None:
+        try:
+            duration = max(0, int(self._audio_duration_ms or 0))
+            frac = (float(position_ms) / float(duration)) if duration > 0 else 0.0
+            self.review_waveform.set_progress_fraction(frac)
+        except Exception:
+            pass
+
+    def _on_audio_duration_changed(self, duration_ms: int) -> None:
+        self._audio_duration_ms = max(0, int(duration_ms or 0))
+
+    def _on_audio_playback_state_changed(self, _state: Any) -> None:
+        player = self._audio_player
+        if player is None:
+            return
+        try:
+            state = player.playbackState()
+            if state == QMediaPlayer.PlaybackState.PlayingState:
+                self.review_audio_play_btn.setText("Pause")
+                self.review_audio_play_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPause))
+                self.review_audio_status_label.setText("Playing")
+            elif state == QMediaPlayer.PlaybackState.PausedState:
+                self.review_audio_play_btn.setText("Play")
+                self.review_audio_play_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay))
+                self.review_audio_status_label.setText("Paused")
+            else:
+                self.review_audio_play_btn.setText("Play")
+                self.review_audio_play_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay))
+                if self._current_audio_source:
+                    self.review_audio_status_label.setText("Stopped")
+        except Exception:
+            pass
+
+    def _on_audio_error(self, *args: Any) -> None:
+        msg = ""
+        try:
+            if self._audio_player is not None and hasattr(self._audio_player, "errorString"):
+                msg = str(self._audio_player.errorString() or "")
+        except Exception:
+            msg = ""
+        self.review_audio_status_label.setText(f"Audio error: {msg or 'playback failed'}")
+
+    def _toggle_audio_playback(self) -> None:
+        player = self._audio_player
+        if player is None:
+            return
+        if not self._current_audio_source:
+            row = self._selected_row()
+            if row is None:
+                return
+            self._load_audio_preview_for_row(row)
+        try:
+            if player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+                player.pause()
+            else:
+                player.play()
+        except Exception:
+            self.review_audio_status_label.setText("Audio playback unavailable")
+
+    def _stop_audio_playback(self) -> None:
+        player = self._audio_player
+        if player is None:
+            return
+        try:
+            player.stop()
+            self.review_waveform.set_progress_fraction(0.0)
+        except Exception:
+            pass
+
+    def _load_audio_preview_for_row(self, row: dict[str, Any]) -> None:
+        source = str(row.get("source", "")).strip()
+        if not source:
+            self.review_waveform.clear("No source path available.")
+            self.review_audio_status_label.setText("No source path")
+            self._current_audio_source = ""
+            return
+
+        src_path = Path(source)
+        if not src_path.exists():
+            self.review_waveform.clear("Source file no longer exists.")
+            self.review_audio_status_label.setText("File missing")
+            self._current_audio_source = ""
+            return
+
+        waveform = self._get_cached_waveform(src_path)
+        if waveform is not None:
+            peaks = list(waveform.get("peaks", []) or [])
+            duration_sec = float(waveform.get("duration_sec", 0.0) or 0.0)
+            self.review_waveform.set_waveform(peaks, f"{src_path.name} · {duration_sec:.2f}s")
+        else:
+            self.review_waveform.clear("Waveform preview unavailable for this file.")
+
+        if self._audio_player is not None:
+            try:
+                if self._current_audio_source != str(src_path):
+                    self._audio_duration_ms = 0
+                    self._audio_player.stop()
+                    self._audio_player.setSource(QUrl.fromLocalFile(str(src_path)))
+                    self._current_audio_source = str(src_path)
+                    self.review_audio_status_label.setText("Ready")
+                should_autoplay = self.review_audio_autoplay.isChecked() and not self._suppress_autoplay_once
+                self._suppress_autoplay_once = False
+                if should_autoplay:
+                    self._audio_player.play()
+            except Exception:
+                self.review_audio_status_label.setText("Audio playback unavailable")
+        self._save_layout_prefs()
+
+    def _get_cached_waveform(self, path: Path) -> Optional[dict[str, Any]]:
+        key = str(path)
+        try:
+            stat = path.stat()
+            sig = (int(stat.st_mtime_ns), int(stat.st_size))
+        except Exception:
+            sig = (0, 0)
+        cached = self._waveform_cache.get(key)
+        if cached and tuple(cached.get("sig", ())) == sig:
+            return cached
+
+        waveform = self._build_waveform_peaks(path)
+        if waveform is None:
+            return None
+        waveform["sig"] = sig
+        self._waveform_cache[key] = waveform
+        return waveform
+
+    def _build_waveform_peaks(self, path: Path) -> Optional[dict[str, Any]]:
+        target_bins = 420
+        if _sf is not None:
+            try:
+                data, sr = _sf.read(str(path), dtype="float32", always_2d=True)
+                if data is None:
+                    return None
+                frame_count = int(len(data))
+                if frame_count <= 0:
+                    return {"peaks": [], "duration_sec": 0.0}
+                # NumPy array math is intentionally avoided here so this path still
+                # works if the runtime returns array-like objects.
+                channels = int(getattr(data, "shape", [frame_count, 1])[1]) if hasattr(data, "shape") else 1
+                step = max(1, int(frame_count / target_bins))
+                peaks: list[float] = []
+                for i in range(0, frame_count, step):
+                    end = min(frame_count, i + step)
+                    peak = 0.0
+                    for j in range(i, end):
+                        if channels > 1:
+                            # Average absolute magnitude across channels.
+                            try:
+                                sample = data[j]
+                                mag = 0.0
+                                for ch in sample:
+                                    mag += abs(float(ch))
+                                mag /= max(1, channels)
+                            except Exception:
+                                mag = 0.0
+                        else:
+                            try:
+                                mag = abs(float(data[j][0]))
+                            except Exception:
+                                mag = 0.0
+                        if mag > peak:
+                            peak = mag
+                    peaks.append(max(0.0, min(1.0, peak)))
+                    if len(peaks) >= target_bins:
+                        break
+                duration_sec = float(frame_count) / float(sr or 1)
+                return {"peaks": peaks, "duration_sec": duration_sec}
+            except Exception:
+                pass
+
+        # Lightweight fallback for simple PCM WAVs if soundfile is unavailable.
+        try:
+            with wave.open(str(path), "rb") as wf:
+                frames = wf.getnframes()
+                sr = wf.getframerate() or 1
+                if frames <= 0:
+                    return {"peaks": [], "duration_sec": 0.0}
+                raw = wf.readframes(min(frames, sr * 30))
+                if not raw:
+                    return {"peaks": [], "duration_sec": 0.0}
+                # Coarse byte-domain envelope fallback (not amplitude accurate, but useful visually).
+                step = max(1, int(len(raw) / target_bins))
+                peaks = []
+                for i in range(0, len(raw), step):
+                    block = raw[i : i + step]
+                    if not block:
+                        break
+                    peak = max(block) / 255.0
+                    peaks.append(max(0.0, min(1.0, float(peak))))
+                    if len(peaks) >= target_bins:
+                        break
+                duration_sec = float(frames) / float(sr)
+                return {"peaks": peaks, "duration_sec": duration_sec}
+        except Exception:
+            return None
+
+    # ------------------------------------------------------------------
+    # Batch actions / context menu
+    def _sync_batch_review_controls(self) -> None:
+        rows = self._selected_rows()
+        count = len(rows)
+        self.review_selection_count_label.setText(f"{count} selected")
+        enabled = count > 0 and bool(self._rows_all)
+        for btn in (
+            self.review_batch_override_btn,
+            self.review_batch_hint_btn,
+            self.review_filter_selected_pack_btn,
+            self.review_filter_selected_bucket_btn,
+        ):
+            btn.setEnabled(enabled)
+
+    def _clear_review_filters(self) -> None:
+        with QSignalBlocker(self.review_search):
+            self.review_search.clear()
+        with QSignalBlocker(self.review_bucket_filter):
+            self.review_bucket_filter.setCurrentIndex(0)
+        with QSignalBlocker(self.review_pack_filter):
+            self.review_pack_filter.setCurrentIndex(0)
+        with QSignalBlocker(self.review_low_only):
+            self.review_low_only.setChecked(True)
+        self._apply_review_filters()
+
+    def _filter_to_selected_pack(self) -> None:
+        row = self._selected_row()
+        if row is None:
+            return
+        pack = str(row.get("pack", ""))
+        idx = self.review_pack_filter.findText(pack)
+        if idx >= 0:
+            self.review_pack_filter.setCurrentIndex(idx)
+        self._apply_review_filters()
+
+    def _filter_to_selected_bucket(self) -> None:
+        row = self._selected_row()
+        if row is None:
+            return
+        bucket = str(row.get("effective_bucket") or row.get("chosen_bucket") or "")
+        idx = self.review_bucket_filter.findText(bucket)
+        if idx >= 0:
+            self.review_bucket_filter.setCurrentIndex(idx)
+        self._apply_review_filters()
+
+    def _open_batch_override_menu(self) -> None:
+        rows = self._selected_rows()
+        if not rows:
+            return
+        menu = QMenu(self.review_batch_override_btn)
+        for bucket in self._bucket_choices:
+            act = menu.addAction(bucket)
+            act.triggered.connect(lambda _checked=False, b=bucket: self._apply_override_to_rows(self._selected_rows(), b))
+        if menu.isEmpty():
+            act = menu.addAction("(No buckets)")
+            act.setEnabled(False)
+        menu.exec(self.review_batch_override_btn.mapToGlobal(self.review_batch_override_btn.rect().bottomLeft()))
+
+    def _selected_rows_single_bucket(self) -> Optional[str]:
+        rows = self._selected_rows()
+        buckets = {
+            str(r.get("effective_bucket") or r.get("chosen_bucket") or "")
+            for r in rows
+            if str(r.get("effective_bucket") or r.get("chosen_bucket") or "")
+        }
+        return next(iter(buckets)) if len(buckets) == 1 else None
+
+    def _batch_tokens(self, kind: str) -> list[str]:
+        rows = self._selected_rows()
+        if not rows:
+            return []
+        token_sets: list[set[str]] = []
+        for row in rows:
+            tokens = self._filename_tokens(row) if kind == "filename" else self._folder_tokens(row)
+            token_sets.append(set(tokens))
+        if not token_sets:
+            return []
+        common = set.intersection(*token_sets) if len(token_sets) > 1 else token_sets[0]
+        if common:
+            return sorted(common)
+        union: set[str] = set().union(*token_sets)
+        return sorted(union)
+
+    def _open_batch_hint_menu_from_button(self) -> None:
+        menu = QMenu(self.review_batch_hint_btn)
+        self._populate_batch_hint_menu(menu)
+        menu.exec(self.review_batch_hint_btn.mapToGlobal(self.review_batch_hint_btn.rect().bottomLeft()))
+
+    def _populate_batch_hint_menu(self, menu: QMenu) -> None:
+        rows = self._selected_rows()
+        if not rows:
+            act = menu.addAction("(No rows selected)")
+            act.setEnabled(False)
+            return
+        bucket = self._selected_rows_single_bucket()
+        if not bucket:
+            act = menu.addAction("Select rows from a single effective bucket")
+            act.setEnabled(False)
+            return
+
+        filename_menu = menu.addMenu(f"Apply filename hint to {len(rows)} selected")
+        folder_menu = menu.addMenu(f"Apply folder hint to {len(rows)} selected")
+        for kind, target_menu in (("filename", filename_menu), ("folder", folder_menu)):
+            tokens = self._batch_tokens(kind)
+            if not tokens:
+                act = target_menu.addAction("(No tokens)")
+                act.setEnabled(False)
+                continue
+            for token in tokens[:40]:
+                act = target_menu.addAction(token)
+                act.triggered.connect(
+                    lambda _checked=False, k=kind, t=token: self._apply_hint_token_to_selected(k, t)
+                )
+
+    def _apply_hint_token_to_selected(self, kind: str, token: str) -> None:
+        rows = self._selected_rows()
+        if not rows:
+            return
+        count = 0
+        for row in rows:
+            source = str(row.get("source", ""))
+            bucket = str(row.get("effective_bucket") or row.get("chosen_bucket") or "")
+            if not source or not bucket:
+                continue
+            self.hintSaveRequested.emit(source, kind, bucket, token)
+            count += 1
+        self.review_feedback_label.setText(f"Applied {kind} hint '{token}' to {count} selected row(s). Rerun to apply.")
+        self.review_feedback_label.setProperty("state", "success")
+        repolish(self.review_feedback_label)
+
+    def _open_review_context_menu(self, point) -> None:
+        row = self._selected_row()
+        menu = QMenu(self.review_table)
+        selected = self._selected_rows()
+        if row is not None:
+            open_dir = menu.addAction("Open file location")
+            open_dir.triggered.connect(self._open_selected_file_location)
+            copy_path = menu.addAction("Copy source path")
+            copy_path.triggered.connect(self._copy_selected_source_path)
+            menu.addSeparator()
+
+        override_menu = menu.addMenu("Mark selected as…")
+        if not selected:
+            override_menu.setEnabled(False)
+        else:
+            for bucket in self._bucket_choices:
+                act = override_menu.addAction(bucket)
+                act.triggered.connect(lambda _checked=False, b=bucket: self._apply_override_to_rows(self._selected_rows(), b))
+
+        hint_menu = menu.addMenu("Apply hint to selected…")
+        self._populate_batch_hint_menu(hint_menu)
+
+        if row is not None:
+            menu.addSeparator()
+            only_pack = menu.addAction("Only show this pack")
+            only_pack.triggered.connect(self._filter_to_selected_pack)
+            only_bucket = menu.addAction("Only show this bucket")
+            only_bucket.triggered.connect(self._filter_to_selected_bucket)
+        clear_filters = menu.addAction("Clear review filters")
+        clear_filters.triggered.connect(self._clear_review_filters)
+
+        menu.exec(self.review_table.viewport().mapToGlobal(point))
+
+    def _copy_selected_source_path(self) -> None:
+        row = self._selected_row()
+        if row is None:
+            return
+        source = str(row.get("source", ""))
+        if not source:
+            return
+        app = self.window().windowHandle().screen() if False else None
+        _ = app  # keep linter quiet for conditional path above
+        try:
+            from PySide6.QtWidgets import QApplication
+
+            QApplication.clipboard().setText(source)
+            self.review_feedback_label.setText("Copied source path to clipboard.")
+            self.review_feedback_label.setProperty("state", "success")
+            repolish(self.review_feedback_label)
+        except Exception:
+            pass
+
+    def _open_selected_file_location(self) -> None:
+        row = self._selected_row()
+        if row is None:
+            return
+        source = str(row.get("source", ""))
+        if not source:
+            return
+        try:
+            folder = Path(source).parent
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    # Layout persistence
+    def _wire_layout_pref_listeners(self) -> None:
+        self.tabs.currentChanged.connect(lambda _idx: self._save_layout_prefs())
+        self.review_splitter.splitterMoved.connect(lambda _pos, _index: self._save_layout_prefs())
+
+        for widget in (
+            self.review_search,
+            self.preview_search,
+        ):
+            widget.textChanged.connect(lambda _text: self._save_layout_prefs())
+        for combo in (
+            self.review_bucket_filter,
+            self.review_pack_filter,
+            self.preview_bucket_filter,
+            self.preview_pack_filter,
+        ):
+            combo.currentTextChanged.connect(lambda _text: self._save_layout_prefs())
+        for checkbox in (
+            self.review_low_only,
+            self.preview_low_only,
+            self.preview_changed_only,
+        ):
+            checkbox.toggled.connect(lambda _checked: self._save_layout_prefs())
+
+        for table in (self.review_table, self.preview_table):
+            header = table.horizontalHeader()
+            header.sectionMoved.connect(lambda *_args: self._save_layout_prefs())
+            header.sectionResized.connect(lambda *_args: self._save_layout_prefs())
+        self.preview_table.horizontalHeader().sortIndicatorChanged.connect(self._on_preview_sort_changed)
+
+    def _on_preview_sort_changed(self, section: int, order: Qt.SortOrder) -> None:
+        self._preview_sort_column = int(section)
+        self._preview_sort_order = order
+        self._save_layout_prefs()
+
+    def _save_layout_prefs(self) -> None:
+        if self._restoring_layout_prefs:
+            return
+        try:
+            p = self._prefs
+            p.setValue("run_page/tab_index", int(self.tabs.currentIndex()))
+            p.setValue("run_page/review_splitter_state", self.review_splitter.saveState())
+            p.setValue("run_page/review_header_state", self.review_table.horizontalHeader().saveState())
+            p.setValue("run_page/preview_header_state", self.preview_table.horizontalHeader().saveState())
+            p.setValue("run_page/review_search", self.review_search.text())
+            p.setValue("run_page/review_bucket_filter", self.review_bucket_filter.currentText())
+            p.setValue("run_page/review_pack_filter", self.review_pack_filter.currentText())
+            p.setValue("run_page/review_low_only", bool(self.review_low_only.isChecked()))
+            p.setValue("run_page/preview_search", self.preview_search.text())
+            p.setValue("run_page/preview_bucket_filter", self.preview_bucket_filter.currentText())
+            p.setValue("run_page/preview_pack_filter", self.preview_pack_filter.currentText())
+            p.setValue("run_page/preview_low_only", bool(self.preview_low_only.isChecked()))
+            p.setValue("run_page/preview_changed_only", bool(self.preview_changed_only.isChecked()))
+            p.setValue("run_page/preview_sort_col", int(self._preview_sort_column))
+            p.setValue("run_page/preview_sort_order", int(self._preview_sort_order))
+            p.setValue("run_page/audio_autoplay", bool(self.review_audio_autoplay.isChecked()))
+        except Exception:
+            pass
+
+    def _restore_layout_prefs(self) -> None:
+        self._restoring_layout_prefs = True
+        try:
+            p = self._prefs
+            tab_idx = int(p.value("run_page/tab_index", 0) or 0)
+            if 0 <= tab_idx < self.tabs.count():
+                self.tabs.setCurrentIndex(tab_idx)
+
+            review_splitter_state = p.value("run_page/review_splitter_state")
+            if review_splitter_state is not None:
+                try:
+                    self.review_splitter.restoreState(review_splitter_state)
+                except Exception:
+                    pass
+            for key, table in (
+                ("run_page/review_header_state", self.review_table),
+                ("run_page/preview_header_state", self.preview_table),
+            ):
+                state = p.value(key)
+                if state is not None:
+                    try:
+                        table.horizontalHeader().restoreState(state)
+                    except Exception:
+                        pass
+
+            self._pending_filter_restore = {
+                "review_search": str(p.value("run_page/review_search", "") or ""),
+                "review_bucket_filter": str(p.value("run_page/review_bucket_filter", "All buckets") or "All buckets"),
+                "review_pack_filter": str(p.value("run_page/review_pack_filter", "All packs") or "All packs"),
+                "review_low_only": bool(p.value("run_page/review_low_only", True)),
+                "preview_search": str(p.value("run_page/preview_search", "") or ""),
+                "preview_bucket_filter": str(p.value("run_page/preview_bucket_filter", "All buckets") or "All buckets"),
+                "preview_pack_filter": str(p.value("run_page/preview_pack_filter", "All packs") or "All packs"),
+                "preview_low_only": bool(p.value("run_page/preview_low_only", False)),
+                "preview_changed_only": bool(p.value("run_page/preview_changed_only", False)),
+            }
+            self._preview_sort_column = int(p.value("run_page/preview_sort_col", 0) or 0)
+            self._preview_sort_order = Qt.SortOrder(int(p.value("run_page/preview_sort_order", int(Qt.SortOrder.AscendingOrder)) or 0))
+            self.review_audio_autoplay.setChecked(bool(p.value("run_page/audio_autoplay", True)))
+
+            # Apply controls that do not depend on dynamic combo choices immediately.
+            with QSignalBlocker(self.review_search):
+                self.review_search.setText(self._pending_filter_restore["review_search"])
+            with QSignalBlocker(self.preview_search):
+                self.preview_search.setText(self._pending_filter_restore["preview_search"])
+            with QSignalBlocker(self.review_low_only):
+                self.review_low_only.setChecked(self._pending_filter_restore["review_low_only"])
+            with QSignalBlocker(self.preview_low_only):
+                self.preview_low_only.setChecked(self._pending_filter_restore["preview_low_only"])
+            with QSignalBlocker(self.preview_changed_only):
+                self.preview_changed_only.setChecked(self._pending_filter_restore["preview_changed_only"])
+        except Exception:
+            self._pending_filter_restore = {}
+        finally:
+            self._restoring_layout_prefs = False
+
+    def _apply_restored_filter_values_once(self) -> None:
+        if not self._pending_filter_restore:
+            return
+        pending = dict(self._pending_filter_restore)
+        self._pending_filter_restore = {}
+        with QSignalBlocker(self.review_bucket_filter):
+            idx = self.review_bucket_filter.findText(str(pending.get("review_bucket_filter", "All buckets")))
+            self.review_bucket_filter.setCurrentIndex(idx if idx >= 0 else 0)
+        with QSignalBlocker(self.review_pack_filter):
+            idx = self.review_pack_filter.findText(str(pending.get("review_pack_filter", "All packs")))
+            self.review_pack_filter.setCurrentIndex(idx if idx >= 0 else 0)
+        with QSignalBlocker(self.preview_bucket_filter):
+            idx = self.preview_bucket_filter.findText(str(pending.get("preview_bucket_filter", "All buckets")))
+            self.preview_bucket_filter.setCurrentIndex(idx if idx >= 0 else 0)
+        with QSignalBlocker(self.preview_pack_filter):
+            idx = self.preview_pack_filter.findText(str(pending.get("preview_pack_filter", "All packs")))
+            self.preview_pack_filter.setCurrentIndex(idx if idx >= 0 else 0)

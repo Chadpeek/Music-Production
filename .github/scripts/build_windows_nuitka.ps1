@@ -34,7 +34,12 @@ try {
         "--include-module=joblib",
         "--include-package=qdarktheme",
         "--include-package-data=qdarktheme",
-        "--module-parameter=numba-disable-jit=yes"
+        "--module-parameter=numba-disable-jit=yes",
+        # Avoid recursively compiling large upstream test suites in standalone builds.
+        "--nofollow-import-to=numba.tests",
+        "--nofollow-import-to=llvmlite.tests",
+        "--nofollow-import-to=scipy.tests",
+        "--nofollow-import-to=sklearn.tests"
     )
     if (Test-Path "assets\app_icon.ico") {
         $nuitkaArgs += "--windows-icon-from-ico=assets/app_icon.ico"

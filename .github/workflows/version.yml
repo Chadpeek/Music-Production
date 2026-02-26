@@ -20,6 +20,9 @@ jobs:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      SEMANTIC_RELEASE_GH_TOKEN: ${{ secrets.SEMANTIC_RELEASE_TOKEN != '' && secrets.SEMANTIC_RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+      HAS_SEMANTIC_RELEASE_TOKEN: ${{ secrets.SEMANTIC_RELEASE_TOKEN != '' }}
 
     steps:
       - name: Checkout full history
@@ -40,6 +43,15 @@ jobs:
           python -m pip install -c .github/constraints/ci-tools.txt python-semantic-release
           semantic-release --version
 
+      - name: Report versioning auth mode
+        shell: bash
+        run: |
+          if [ "$HAS_SEMANTIC_RELEASE_TOKEN" = "true" ]; then
+            echo "Using SEMANTIC_RELEASE_TOKEN for semantic-release push and workflow dispatch."
+          else
+            echo "::warning::Using GITHUB_TOKEN. Protected 'main' with PR-required rules will reject semantic-release direct pushes (GH006). Add repository secret SEMANTIC_RELEASE_TOKEN (PAT or GitHub App token with bypass rights) or switch to a PR-based versioning flow."
+          fi
+
       - name: Detect existing version tag on HEAD
         id: head_tag
         shell: bash
@@ -57,7 +69,7 @@ jobs:
       - name: Run semantic versioning (create/update tag)
         if: steps.head_tag.outputs.has_tag != 'true'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ env.SEMANTIC_RELEASE_GH_TOKEN }}
         run: |
           semantic-release -vv version
 
@@ -79,7 +91,7 @@ jobs:
       - name: Trigger Windows release workflow
         if: steps.head_tag.outputs.has_tag != 'true' && steps.release_tag.outputs.found == 'true'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ env.SEMANTIC_RELEASE_GH_TOKEN }}
         run: |
           gh workflow run release.yml --ref main -f tag=${{ steps.release_tag.outputs.tag }}
 

@@ -1396,7 +1396,7 @@ class ProducerOSEngine:
         mode: str = "analyze",
         overwrite_nfo: bool = False,  # reserved for future; kept for UI compatibility
         normalize_pack_name: bool = False,  # reserved for future
-        developer_options: Optional[Dict[str, bool]] = None,
+        developer_options: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Execute a run.
 

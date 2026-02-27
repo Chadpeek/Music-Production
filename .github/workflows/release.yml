@@ -164,7 +164,7 @@ jobs:
           "utc_start=$([DateTime]::UtcNow.ToString('o'))" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: Build installer
-        uses: Minionguyjpro/Inno-Setup-Action@e3458b12721a98eee2112ea817d1a50467d6cbec # v1.2.6
+        uses: Minionguyjpro/Inno-Setup-Action@36abc9fdddc244a69f4895566fa5b2d8d5854e43 # v1.2.7
         with:
           path: build/installer/ProducerOS.iss
           options: /DMyAppVersion=${{ steps.release_meta.outputs.version }}

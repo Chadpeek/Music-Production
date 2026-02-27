@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.6.8 (2026-02-27)
+
+### Bug Fixes
+
+- Use peeled codeql-action commit SHA
+  ([`e073068`](https://github.com/KidChadd/Producer-OS/commit/e073068767f52d3b8afb88a84f77a702b7b80416))
+
+
 ## v0.6.7 (2026-02-26)
 
 ### Bug Fixes

@@ -29,7 +29,7 @@ dev = [
   "pytest",
   "ruff",
   "mypy",
-  "nuitka>=2.5",
+  "nuitka>=4.0.8",
   "zstandard>=0.23",
   "python-semantic-release>=9.0.0"
 ]

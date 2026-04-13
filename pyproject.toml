@@ -23,7 +23,7 @@ dependencies = [
 [project.optional-dependencies]
 gui = [
   "PySide6",
-  "pyqtdarktheme>=0.1.7",
+  "pyqtdarktheme>=2.1.0",
 ]
 dev = [
   "pytest",

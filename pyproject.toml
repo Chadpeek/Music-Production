@@ -15,7 +15,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "numpy>=1.23",
-    "librosa>=0.10",
+    "librosa>=0.11.0",
     "soundfile>=0.12",
     "jsonschema>=4.0",
 ]

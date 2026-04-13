@@ -17,7 +17,7 @@ dependencies = [
     "numpy>=1.23",
     "librosa>=0.10",
     "soundfile>=0.12",
-    "jsonschema>=4.0",
+    "jsonschema>=4.26.0",
 ]
 
 [project.optional-dependencies]
